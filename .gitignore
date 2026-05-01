@@ -39,6 +39,9 @@ yarn-error.log*
 # user data & notebooks (server-local)
 /data/
 
+# uploaded images (server-local)
+/public/assets/uploads/
+
 # claude code working files
 /.claude/
 
