@@ -1,0 +1,1926 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KlassenTimer</title>
+    <link rel="stylesheet" href="assets/bootstrap-icons/font/bootstrap-icons.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Nunito:wght@500;700&display=swap');
+
+        :root {
+            --bg-1: #f5f8ff;
+            --bg-2: #fff5e8;
+            --surface: rgba(255, 255, 255, 0.78);
+            --surface-strong: rgba(255, 255, 255, 0.92);
+            --ink: #172033;
+            --muted: #5d687d;
+            --primary: #0f9e99;
+            --primary-strong: #0a6f77;
+            --accent: #f39c12;
+            --danger: #d94343;
+            --success: #2da36a;
+            --focus-ring: #2463eb;
+            --shadow: 0 18px 55px rgba(28, 35, 52, 0.14);
+            --radius-xl: 26px;
+            --radius-l: 16px;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            color: var(--ink);
+            font-family: 'Nunito', 'Segoe UI', sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(1200px 500px at 8% 10%, rgba(15, 158, 153, 0.20), transparent 55%),
+                radial-gradient(900px 500px at 92% 88%, rgba(243, 156, 18, 0.22), transparent 58%),
+                linear-gradient(145deg, var(--bg-1), var(--bg-2));
+            overflow: auto;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background-image: radial-gradient(rgba(17, 24, 39, 0.05) 1px, transparent 1px);
+            background-size: 24px 24px;
+            opacity: 0.28;
+            pointer-events: none;
+        }
+
+        .app {
+            position: relative;
+            min-height: 100dvh;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            padding: clamp(14px, 2.4vw, 30px);
+            gap: clamp(10px, 1.4vw, 18px);
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: clamp(10px, 1.4vw, 14px) clamp(14px, 1.8vw, 20px);
+            border-radius: 18px;
+            background: var(--surface);
+            border: 1px solid rgba(255, 255, 255, 0.65);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 28px rgba(18, 26, 41, 0.08);
+        }
+
+        .topbar,
+        #screen-timer > .timer-header {
+            transition: filter 0.22s ease, opacity 0.22s ease;
+        }
+
+        .app.timer-focus-active .topbar,
+        .app.timer-focus-active #screen-timer > .timer-header {
+            filter: blur(7px);
+            opacity: 0.32;
+        }
+
+        .brand {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            font-family: 'Sora', sans-serif;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+
+        .brand-badge {
+            width: 30px;
+            height: 30px;
+            border-radius: 10px;
+            background: linear-gradient(140deg, #0f9e99, #f39c12);
+            box-shadow: 0 6px 14px rgba(15, 158, 153, 0.28);
+        }
+
+        .screen {
+            display: none;
+            min-height: 0;
+            animation: fadeIn 0.45s ease;
+        }
+
+        .screen.active {
+            display: grid;
+        }
+
+        #screen-home {
+            grid-template-rows: auto auto 1fr;
+            gap: clamp(12px, 1.8vw, 20px);
+            align-content: start;
+        }
+
+        .hero {
+            background: var(--surface-strong);
+            border: 1px solid rgba(255, 255, 255, 0.76);
+            box-shadow: var(--shadow);
+            border-radius: var(--radius-xl);
+            padding: clamp(18px, 2.8vw, 32px);
+        }
+
+        .hero h1 {
+            margin: 0;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(1.6rem, 3.1vw, 2.9rem);
+            line-height: 1.1;
+        }
+
+        .hero p {
+            margin: 10px 0 0;
+            color: var(--muted);
+            font-size: clamp(0.98rem, 1.5vw, 1.15rem);
+            max-width: 68ch;
+        }
+
+        .timer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: clamp(12px, 1.6vw, 18px);
+        }
+
+        .timer-card {
+            text-align: left;
+            border: 0;
+            border-radius: var(--radius-l);
+            padding: clamp(16px, 2vw, 22px);
+            background: var(--surface-strong);
+            box-shadow: 0 12px 34px rgba(22, 31, 47, 0.11);
+            cursor: pointer;
+            transition: transform 0.22s ease, box-shadow 0.22s ease;
+            animation: riseIn 0.6s ease both;
+        }
+
+        .timer-card:nth-child(2) { animation-delay: 0.08s; }
+        .timer-card:nth-child(3) { animation-delay: 0.16s; }
+
+        .timer-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 16px 36px rgba(12, 20, 38, 0.15);
+        }
+
+        .timer-card:focus-visible,
+        button:focus-visible,
+        input:focus-visible {
+            outline: 3px solid var(--focus-ring);
+            outline-offset: 2px;
+        }
+
+        .timer-card h3 {
+            margin: 0;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(1.06rem, 1.4vw, 1.26rem);
+        }
+
+        .card-head {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            background: rgba(15, 158, 153, 0.14);
+            color: var(--primary-strong);
+            flex: 0 0 auto;
+        }
+
+        .card-icon .bi {
+            font-size: 1.1rem;
+            line-height: 1;
+        }
+
+        .timer-card p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .hint {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.96rem;
+        }
+
+        #screen-timer {
+            grid-template-rows: auto 1fr auto;
+            gap: clamp(10px, 1.4vw, 16px);
+        }
+
+        .timer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .timer-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .timer-title {
+            margin: 0;
+            font-family: 'Sora', sans-serif;
+            font-size: clamp(1.05rem, 2vw, 1.4rem);
+        }
+
+        .subtle {
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .back-btn {
+            border: 0;
+            border-radius: 12px;
+            padding: 10px 13px;
+            font-weight: 700;
+            background: rgba(23, 32, 51, 0.08);
+            color: var(--ink);
+            cursor: pointer;
+        }
+
+        .toggle-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid rgba(23, 32, 51, 0.12);
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .toggle-wrap input {
+            accent-color: var(--primary);
+            width: 18px;
+            height: 18px;
+            margin: 0;
+        }
+
+        .timer-stage {
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: clamp(8px, 1.1vw, 14px);
+            background: var(--surface-strong);
+            border: 1px solid rgba(255, 255, 255, 0.78);
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow);
+            padding: clamp(12px, 1.8vw, 20px);
+            overflow: auto;
+        }
+
+        .settings-panel {
+            display: grid;
+            gap: 10px;
+        }
+
+        .slider {
+            width: 100%;
+            accent-color: var(--primary);
+        }
+
+        .display-zone {
+            min-height: 0;
+            display: grid;
+            place-items: center;
+            align-content: center;
+            gap: 14px;
+            padding-block: clamp(6px, 1.2vw, 16px);
+            overflow: auto;
+        }
+
+        .countdown-ring {
+            width: min(78vmin, calc(100dvh - 340px));
+            height: min(78vmin, calc(100dvh - 340px));
+            min-width: 180px;
+            min-height: 180px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            box-shadow: 0 16px 52px rgba(14, 24, 40, 0.2);
+            transition: transform 0.26s ease;
+        }
+
+        .countdown-ring.sand-mode {
+            width: min(92vmin, calc(100dvh - 270px));
+            height: min(92vmin, calc(100dvh - 270px));
+            min-width: 220px;
+            min-height: 280px;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .countdown-ring.narrative-mode {
+            width: min(96vw, 1100px);
+            height: min(56vmin, 460px);
+            min-width: 260px;
+            min-height: 220px;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .countdown-ring.puzzle-mode {
+            width: min(96vw, 1100px);
+            height: min(46vmin, 360px);
+            min-width: 260px;
+            min-height: 190px;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .countdown-ring.atmo-mode {
+            width: min(88vmin, 760px);
+            height: min(62vmin, 520px);
+            min-width: 260px;
+            min-height: 240px;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .ring-core {
+            width: 84%;
+            height: 84%;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.93);
+            display: grid;
+            place-items: center;
+            text-align: center;
+            grid-auto-rows: min-content;
+            gap: 8px;
+            padding: 16px;
+        }
+
+        .ring-core.ring-text-mode {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-align: center;
+        }
+
+        .countdown-ring.sand-mode .ring-core {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            background: transparent;
+            padding: 0;
+        }
+
+        .countdown-ring.narrative-mode .ring-core {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            background: transparent;
+            padding: 10px 8px;
+        }
+
+        .countdown-ring.puzzle-mode .ring-core {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            background: transparent;
+            padding: 10px 8px;
+        }
+
+        .countdown-ring.atmo-mode .ring-core {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            background: transparent;
+            padding: 10px 8px;
+        }
+
+        .timer-stage.sand-only .phase-text,
+        .timer-stage.sand-only #contextText,
+        .timer-stage.sand-only #progressTrack {
+            display: none;
+        }
+
+        .timer-stage.sand-only .ring-core {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .timer-stage.sand-only .time-text {
+            margin: 0;
+            line-height: 1;
+            font-size: clamp(2rem, 6.4vmin, 4.6rem);
+        }
+
+        .timer-stage.narrative-only .phase-text,
+        .timer-stage.narrative-only #contextText,
+        .timer-stage.narrative-only #progressTrack {
+            display: none;
+        }
+
+        .timer-stage.puzzle-only .phase-text,
+        .timer-stage.puzzle-only #contextText,
+        .timer-stage.puzzle-only #progressTrack {
+            display: none;
+        }
+
+        .timer-stage.puzzle-only .ring-core {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: clamp(10px, 2vmin, 22px);
+            width: 100%;
+            height: 100%;
+        }
+
+        .timer-stage.puzzle-only .puzzle-board {
+            width: 100%;
+            max-width: none;
+        }
+
+        .timer-stage.puzzle-only .time-text {
+            margin: 0;
+            white-space: nowrap;
+            font-size: clamp(2.1rem, 6vmin, 5rem);
+            line-height: 1;
+            text-align: right;
+        }
+
+        .timer-stage.puzzle-only .display-zone {
+            align-content: start;
+            padding-block: 4px;
+        }
+
+        .timer-stage.puzzle-only .countdown-ring.puzzle-mode {
+            height: min(34vmin, 260px);
+            min-height: 150px;
+        }
+
+        .timer-stage.atmo-only .phase-text,
+        .timer-stage.atmo-only #contextText,
+        .timer-stage.atmo-only #progressTrack {
+            display: none;
+        }
+
+        .hourglass {
+            display: none;
+            width: clamp(180px, 34vmin, 320px);
+            height: clamp(280px, 54vmin, 520px);
+            border: 8px solid #b97f1f;
+            border-radius: 22px;
+            padding: 10px;
+            background: linear-gradient(180deg, rgba(245, 197, 96, 0.22), rgba(232, 171, 57, 0.13));
+            box-shadow: 0 18px 48px rgba(123, 83, 21, 0.24);
+        }
+
+        .hourglass.visible {
+            display: grid;
+            grid-template-rows: 1fr 20px 1fr;
+            gap: 7px;
+        }
+
+        .hourglass-bulb {
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            background: rgba(245, 197, 96, 0.17);
+        }
+
+        .hourglass-bulb.top-bulb {
+            clip-path: polygon(9% 0%, 91% 0%, 61% 100%, 39% 100%);
+        }
+
+        .hourglass-bulb.bottom-bulb {
+            clip-path: polygon(39% 0%, 61% 0%, 91% 100%, 9% 100%);
+        }
+
+        .hourglass-fill {
+            position: absolute;
+            left: 0;
+            right: 0;
+            background: linear-gradient(180deg, #f5c560, #e2a43a);
+            transition: height 0.15s linear;
+        }
+
+        .hourglass-fill.top {
+            bottom: 0;
+            height: 100%;
+            clip-path: polygon(8% 0%, 92% 0%, 62% 100%, 38% 100%);
+        }
+
+        .hourglass-fill.bottom {
+            bottom: 0;
+            height: 0%;
+            clip-path: polygon(38% 0%, 62% 0%, 92% 100%, 8% 100%);
+        }
+
+        .hourglass-neck {
+            height: 20px;
+            position: relative;
+            display: grid;
+            place-items: center;
+        }
+
+        .hourglass-stream {
+            width: 6px;
+            height: 100%;
+            background: linear-gradient(180deg, rgba(245, 197, 96, 0.1), #f1bc54, rgba(245, 197, 96, 0.1));
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .hourglass.running .hourglass-stream {
+            opacity: 1;
+        }
+
+        .narrative-board {
+            display: none;
+            width: min(96%, 1000px);
+            padding: clamp(10px, 2vmin, 18px);
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(194, 229, 255, 0.55), rgba(230, 245, 255, 0.72));
+            box-shadow: inset 0 0 0 2px rgba(78, 127, 173, 0.22);
+            gap: 10px;
+        }
+
+        .narrative-board.visible {
+            display: grid;
+        }
+
+        .narrative-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 800;
+            color: #27496b;
+            font-size: clamp(0.88rem, 1.6vmin, 1.1rem);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .narrative-road {
+            position: relative;
+            height: clamp(78px, 16vmin, 128px);
+            border-radius: 14px;
+            background:
+                repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.7) 0 20px, transparent 20px 40px),
+                linear-gradient(180deg, #4f637a, #394b5f);
+            box-shadow: inset 0 0 0 2px rgba(15, 26, 41, 0.28);
+            overflow: hidden;
+        }
+
+        .narrative-finish {
+            position: absolute;
+            top: 0;
+            right: 14px;
+            bottom: 0;
+            width: clamp(16px, 2.5vmin, 24px);
+            background:
+                conic-gradient(from 45deg, #fff 0 25%, #1f2b39 25% 50%, #fff 50% 75%, #1f2b39 75% 100%);
+            background-size: 12px 12px;
+            border-left: 2px solid rgba(255, 255, 255, 0.85);
+        }
+
+        .narrative-car {
+            position: absolute;
+            top: 50%;
+            left: 4%;
+            transform: translate(-50%, -50%);
+            width: clamp(86px, 14vmin, 140px);
+            height: clamp(44px, 8vmin, 80px);
+            border-radius: 0;
+            display: grid;
+            place-items: center;
+            color: #fff;
+            transition: left 0.15s linear;
+            pointer-events: none;
+        }
+
+        .narrative-car img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: drop-shadow(0 5px 8px rgba(18, 22, 30, 0.34));
+            display: block;
+        }
+
+        .narrative-car .bi {
+            font-size: clamp(1.2rem, 2.8vmin, 1.8rem);
+            line-height: 1;
+            color: #f5f7fb;
+            background: linear-gradient(180deg, #ff6b4a, #d2472f);
+            border-radius: 10px;
+            padding: 6px 9px;
+            box-shadow: 0 6px 14px rgba(40, 17, 14, 0.35);
+        }
+
+        .narrative-car.use-image .bi {
+            display: none;
+        }
+
+        .narrative-progress {
+            width: 100%;
+            height: clamp(14px, 2.6vmin, 22px);
+            border-radius: 999px;
+            background: rgba(32, 56, 82, 0.17);
+            overflow: hidden;
+        }
+
+        .narrative-progress-fill {
+            width: 0%;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #2a8fdd, #43b4ff);
+            transition: width 0.15s linear;
+        }
+
+        .puzzle-board {
+            display: none;
+            width: min(96%, 1000px);
+            padding: clamp(10px, 2vmin, 18px);
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255, 245, 210, 0.72), rgba(255, 236, 189, 0.75));
+            box-shadow: inset 0 0 0 2px rgba(171, 126, 39, 0.25);
+            gap: 10px;
+        }
+
+        .puzzle-board.visible {
+            display: grid;
+        }
+
+        .puzzle-frame {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 8;
+            border-radius: 14px;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: inset 0 0 0 2px rgba(52, 75, 102, 0.3);
+        }
+
+        .puzzle-piece {
+            position: absolute;
+            width: calc(100% / var(--cols));
+            height: calc(100% / var(--rows));
+            left: calc(var(--col) * 100% / var(--cols));
+            top: calc(var(--row) * 100% / var(--rows));
+            background:
+                radial-gradient(circle at 22% 25%, rgba(255, 255, 255, 0.85) 0 16%, transparent 16.1%),
+                radial-gradient(circle at 66% 35%, rgba(255, 236, 178, 0.92) 0 18%, transparent 18.1%),
+                radial-gradient(circle at 42% 72%, rgba(178, 230, 255, 0.88) 0 18%, transparent 18.1%),
+                linear-gradient(135deg, #79a8de, #b7d4f3 44%, #f6d18f 100%);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45), 0 3px 8px rgba(48, 39, 24, 0.22);
+            border-radius: 6px;
+            opacity: 0;
+            transform: scale(0.88);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+        .puzzle-piece.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .puzzle-progress {
+            width: 100%;
+            height: clamp(14px, 2.6vmin, 22px);
+            border-radius: 999px;
+            background: rgba(106, 73, 14, 0.18);
+            overflow: hidden;
+        }
+
+        .puzzle-progress-fill {
+            width: 0%;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #d98e1c, #efb23f);
+            transition: width 0.2s linear;
+        }
+
+        .atmo-board {
+            display: none;
+            width: min(92%, 760px);
+            min-height: clamp(220px, 42vmin, 380px);
+            border-radius: 24px;
+            padding: clamp(14px, 2.3vmin, 24px);
+            background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.06));
+            box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.2);
+            grid-template-rows: 1fr auto;
+            place-items: center;
+            gap: 12px;
+        }
+
+        .atmo-board.visible {
+            display: grid;
+        }
+
+        .atmo-led {
+            width: clamp(120px, 24vmin, 220px);
+            height: clamp(120px, 24vmin, 220px);
+            border-radius: 50%;
+            border: 6px solid rgba(255, 255, 255, 0.56);
+            transition: background 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+            transform: scale(1);
+        }
+
+        .atmo-led.color-fade {
+            animation: atmoColorFade 0.45s ease;
+        }
+
+        @keyframes atmoColorFade {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.52; transform: scale(0.96); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .atmo-led.green {
+            background: radial-gradient(circle at 38% 35%, #93f3be, #27a86b 58%, #1d7c4e 100%);
+            box-shadow: 0 0 30px rgba(39, 168, 107, 0.52), 0 0 90px rgba(39, 168, 107, 0.35);
+        }
+
+        .atmo-led.yellow {
+            background: radial-gradient(circle at 38% 35%, #ffe68b, #efc13a 58%, #bb8f1e 100%);
+            box-shadow: 0 0 30px rgba(239, 193, 58, 0.52), 0 0 90px rgba(239, 193, 58, 0.35);
+        }
+
+        .atmo-led.red {
+            background: radial-gradient(circle at 38% 35%, #ff9da0, #d94b56 58%, #a32a35 100%);
+            box-shadow: 0 0 30px rgba(217, 75, 86, 0.55), 0 0 90px rgba(217, 75, 86, 0.38);
+        }
+
+        .atmo-caption {
+            margin: 0;
+            font-family: 'Sora', sans-serif;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            color: #31445c;
+            text-transform: uppercase;
+            font-size: clamp(0.95rem, 1.8vmin, 1.22rem);
+        }
+
+        .time-text {
+            margin: 0;
+            font-family: 'Sora', sans-serif;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            line-height: 1;
+            font-size: clamp(2.5rem, 12vmin, 8.5rem);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .phase-text {
+            margin: 0;
+            font-size: clamp(0.95rem, 2vmin, 1.25rem);
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+
+        .progress-track {
+            width: min(920px, 96%);
+            height: clamp(18px, 3.8vmin, 34px);
+            border-radius: 999px;
+            background: rgba(23, 32, 51, 0.12);
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0;
+            border-radius: inherit;
+            transition: width 0.15s linear;
+            background: linear-gradient(90deg, #0a6f77, #0f9e99);
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            position: sticky;
+            bottom: 0;
+            z-index: 5;
+            padding-top: 8px;
+            background: linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7), transparent);
+        }
+
+        .btn {
+            border: 0;
+            border-radius: 12px;
+            padding: 11px 16px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .btn.start { background: var(--success); color: #fff; }
+        .btn.pause { background: var(--accent); color: #172033; }
+        .btn.reset { background: var(--danger); color: #fff; }
+        .btn.adjust { background: #314566; color: #fff; }
+
+        .interval-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+        }
+
+        .field {
+            display: grid;
+            gap: 5px;
+            background: rgba(255, 255, 255, 0.74);
+            border-radius: 12px;
+            padding: 8px 10px;
+        }
+
+        .field label {
+            font-size: 0.82rem;
+            color: var(--muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .field input {
+            border: 1px solid rgba(23, 32, 51, 0.15);
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 1rem;
+            font-family: inherit;
+            color: var(--ink);
+            background: #fff;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes riseIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 760px) {
+            .app { padding: 10px; }
+            .timer-stage { padding: 10px; }
+            .countdown-ring {
+                width: min(92vw, calc(100dvh - 320px));
+                height: min(92vw, calc(100dvh - 320px));
+            }
+            .timer-stage.puzzle-only .ring-core {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+            .timer-stage.puzzle-only .time-text {
+                text-align: center;
+                font-size: clamp(1.7rem, 6.2vw, 2.6rem);
+            }
+            .phase-text { font-size: 0.88rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="topbar">
+            <div class="brand">
+                <span class="brand-badge" aria-hidden="true"></span>
+                <span>KlassenTimer</span>
+            </div>
+            <span class="subtle">Timer-Werkzeug für den Unterricht</span>
+        </header>
+
+        <section class="screen active" id="screen-home" aria-label="Timer Auswahl">
+            <article class="hero">
+                <h1>Wähle einen Timer für deine Klasse</h1>
+                <p>Großflächige Anzeige, schnelle Einstellung und klare Signale für ruhige Übergänge im Unterricht.</p>
+            </article>
+
+            <div class="timer-grid" id="timerCards">
+                <button class="timer-card" data-timer="ampel">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-alarm"></i></span>
+                        <h3>Ampel-Countdown</h3>
+                    </div>
+                    <p>Grün, gelb, rot je nach Restzeit. Ideal für Arbeitsphasen mit klarer Warnstufe.</p>
+                </button>
+                <button class="timer-card" data-timer="fokus">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-bullseye"></i></span>
+                        <h3>Fokus-Countdown</h3>
+                    </div>
+                    <p>Ruhige große Anzeige mit Fortschrittsring. Perfekt für Lese- und Schreibzeiten.</p>
+                </button>
+                <button class="timer-card" data-timer="intervall">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-arrow-repeat"></i></span>
+                        <h3>Intervalltimer</h3>
+                    </div>
+                    <p>Wechselt automatisch zwischen Arbeits- und Pausenphase über mehrere Runden.</p>
+                </button>
+                <button class="timer-card" data-timer="sanduhr">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-hourglass-split"></i></span>
+                        <h3>Sanduhr</h3>
+                    </div>
+                    <p>Ruhige Sanduhr-Darstellung mit ablaufendem Sand für visuell klare Zeitführung.</p>
+                </button>
+                <!-- <button class="timer-card" data-timer="narrativ">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-car-front-fill"></i></span>
+                        <h3>Narrativer Timer</h3>
+                    </div>
+                    <p>Ein Auto fährt als Team-Motivation sichtbar auf eine Ziellinie zu.</p>
+                </button> -->
+                <button class="timer-card" data-timer="narrativ2">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-puzzle-fill"></i></span>
+                        <h3>Puzzle-Timer</h3>
+                    </div>
+                    <p>20 Teile werden Schritt für Schritt sichtbar; nach jedem 1/20 der Gesamtzeit kommt ein zufälliges Teil dazu.</p>
+                </button>
+                <button class="timer-card" data-timer="atmo">
+                    <div class="card-head">
+                        <span class="card-icon" aria-hidden="true"><i class="bi bi-lightbulb-fill"></i></span>
+                        <h3>Atmosphärischer Timer</h3>
+                    </div>
+                    <p>LED-Licht wechselt von Grün über Gelb auf Rot und unterstützt ruhige Arbeitsphasen.</p>
+                </button>
+            </div>
+
+            <p class="hint">Workflow: Timer wählen, Zeit einstellen, Start drücken.</p>
+        </section>
+
+        <section class="screen" id="screen-timer" aria-label="Timer Ansicht">
+            <div class="timer-header">
+                <div>
+                    <h2 class="timer-title" id="timerTitle">Timer</h2>
+                    <div class="subtle" id="timerSubtitle">Einstellung</div>
+                </div>
+                <div class="timer-header-actions">
+                    <label class="toggle-wrap" for="showTimeToggle">
+                        <input id="showTimeToggle" type="checkbox" checked>
+                        <span>Zeit anzeigen</span>
+                    </label>
+                    <button class="back-btn" id="backBtn" type="button">Zur Auswahl</button>
+                </div>
+            </div>
+
+            <div class="timer-stage">
+                <div class="settings-panel" id="settingsPanel"></div>
+
+                <div class="display-zone">
+                    <div class="countdown-ring" id="countdownRing" role="img" aria-label="Fortschritt des Timers">
+                        <div class="ring-core">
+                            <div class="hourglass" id="hourglass" aria-hidden="true">
+                                <div class="hourglass-bulb top-bulb">
+                                    <div class="hourglass-fill top" id="sandTop"></div>
+                                </div>
+                                <div class="hourglass-neck">
+                                    <div class="hourglass-stream"></div>
+                                </div>
+                                <div class="hourglass-bulb bottom-bulb">
+                                    <div class="hourglass-fill bottom" id="sandBottom"></div>
+                                </div>
+                            </div>
+                            <div class="narrative-board" id="narrativeBoard" aria-hidden="true">
+                                <div class="narrative-head">
+                                    <span>Start</span>
+                                    <span>Ziel</span>
+                                </div>
+                                <div class="narrative-road">
+                                    <div class="narrative-finish" aria-hidden="true"></div>
+                                    <div class="narrative-car" id="narrativeCar" aria-hidden="true">
+                                        <img src="assets/images/auto.webp" alt="" onload="this.parentElement.classList.add('use-image')" onerror="this.remove()">
+                                        <i class="bi bi-car-front-fill"></i>
+                                    </div>
+                                </div>
+                                <div class="narrative-progress" aria-hidden="true">
+                                    <div class="narrative-progress-fill" id="narrativeProgressFill"></div>
+                                </div>
+                            </div>
+                            <div class="puzzle-board" id="puzzleBoard" aria-hidden="true">
+                                <div class="puzzle-frame" id="puzzleFrame"></div>
+                                <div class="puzzle-progress" aria-hidden="true">
+                                    <div class="puzzle-progress-fill" id="puzzleProgressFill"></div>
+                                </div>
+                            </div>
+                            <div class="atmo-board" id="atmoBoard" aria-hidden="true">
+                                <div class="atmo-led green" id="atmoLed"></div>
+                                <p class="atmo-caption" id="atmoCaption">Ruhige Arbeitszeit</p>
+                            </div>
+                            <p class="phase-text" id="phaseText">Bereit</p>
+                            <p class="time-text" id="timeText">00:00</p>
+                            <p class="subtle" id="contextText">Timer noch nicht gestartet</p>
+                        </div>
+                    </div>
+                    <div class="progress-track" id="progressTrack" aria-hidden="true">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <button class="btn start" id="startBtn" type="button">Start</button>
+                    <button class="btn reset" id="resetBtn" type="button">Reset</button>
+                    <button class="btn adjust" id="minusMinuteBtn" type="button" hidden>-1 Minute</button>
+                    <button class="btn adjust" id="plusMinuteBtn" type="button" hidden>+1 Minute</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const state = {
+            view: 'home',
+            timerType: null,
+            running: false,
+            finishAt: null,
+            tickId: null,
+            durationMs: 10 * 60 * 1000,
+            remainingMs: 10 * 60 * 1000,
+            interval: {
+                workMin: 10,
+                restMin: 3,
+                rounds: 3,
+                phase: 'work',
+                round: 1,
+                phaseDurationMs: 10 * 60 * 1000,
+                phaseRemainingMs: 10 * 60 * 1000,
+                finishAt: null,
+                started: false
+            },
+            puzzle: {
+                pieceCount: 0,
+                revealOrder: []
+            },
+            showTime: true,
+            focusDismissed: false
+        };
+
+        const screenHome = document.getElementById('screen-home');
+        const screenTimer = document.getElementById('screen-timer');
+        const appShell = document.querySelector('.app');
+        const timerCards = document.getElementById('timerCards');
+        const timerTitle = document.getElementById('timerTitle');
+        const timerSubtitle = document.getElementById('timerSubtitle');
+        const settingsPanel = document.getElementById('settingsPanel');
+        const phaseText = document.getElementById('phaseText');
+        const timeText = document.getElementById('timeText');
+        const contextText = document.getElementById('contextText');
+        const countdownRing = document.getElementById('countdownRing');
+        const timerStage = document.querySelector('.timer-stage');
+        const hourglass = document.getElementById('hourglass');
+        const sandTop = document.getElementById('sandTop');
+        const sandBottom = document.getElementById('sandBottom');
+        const narrativeBoard = document.getElementById('narrativeBoard');
+        const narrativeCar = document.getElementById('narrativeCar');
+        const narrativeProgressFill = document.getElementById('narrativeProgressFill');
+        const puzzleBoard = document.getElementById('puzzleBoard');
+        const puzzleFrame = document.getElementById('puzzleFrame');
+        const puzzleProgressFill = document.getElementById('puzzleProgressFill');
+        const atmoBoard = document.getElementById('atmoBoard');
+        const atmoLed = document.getElementById('atmoLed');
+        const atmoCaption = document.getElementById('atmoCaption');
+        const progressTrack = document.getElementById('progressTrack');
+        const progressFill = document.getElementById('progressFill');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const minusMinuteBtn = document.getElementById('minusMinuteBtn');
+        const plusMinuteBtn = document.getElementById('plusMinuteBtn');
+        const backBtn = document.getElementById('backBtn');
+        const showTimeToggle = document.getElementById('showTimeToggle');
+
+        timeText.setAttribute('aria-live', 'polite');
+        timeText.setAttribute('aria-atomic', 'true');
+
+        const timerMeta = {
+            ampel: {
+                title: 'Ampel-Countdown',
+                subtitle: 'Farbstufen zeigen sofort die verbleibende Zeit',
+                defaults: 15
+            },
+            fokus: {
+                title: 'Fokus-Countdown',
+                subtitle: 'Ruhige Darstellung mit präziser Restzeit',
+                defaults: 20
+            },
+            intervall: {
+                title: 'Intervalltimer',
+                subtitle: 'Arbeits- und Pausenphasen wechseln automatisch',
+                defaults: 10
+            },
+            sanduhr: {
+                title: 'Sanduhr',
+                subtitle: 'Klassische Sanduhr-Visualisierung mit großer Restzeit-Anzeige',
+                defaults: 10
+            },
+            narrativ: {
+                title: 'Narrativer Timer',
+                subtitle: 'Das Team fährt sichtbar und motivierend auf das Ziel zu',
+                defaults: 25
+            },
+            narrativ2: {
+                title: 'Puzzle-Timer',
+                subtitle: '20 Teile erscheinen nacheinander: pro 1/20 der Gesamtzeit ein zufälliges Teil',
+                defaults: 30
+            },
+            atmo: {
+                title: 'Atmosphärischer Timer',
+                subtitle: 'Sanfte LED-Ampel für ruhige, stressarme Zeitführung',
+                defaults: 20
+            }
+        };
+
+        function formatTime(ms) {
+            const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        function showScreen(name) {
+            state.view = name;
+            screenHome.classList.toggle('active', name === 'home');
+            screenTimer.classList.toggle('active', name === 'timer');
+        }
+
+        function clearTick() {
+            if (state.tickId) {
+                clearInterval(state.tickId);
+                state.tickId = null;
+            }
+        }
+
+        function stopRunningState() {
+            state.running = false;
+            state.finishAt = null;
+            state.interval.finishAt = null;
+            clearTick();
+            startBtn.textContent = 'Start';
+            startBtn.classList.remove('pause');
+            startBtn.classList.add('start');
+        }
+
+        function setDurationMinutes(minutes) {
+            const clamped = Math.max(0, Math.min(60, Math.round(minutes)));
+            state.durationMs = clamped * 60 * 1000;
+            state.remainingMs = state.durationMs;
+            renderTimer();
+        }
+
+        function updateStandardRemaining() {
+            state.remainingMs = Math.max(0, state.finishAt - Date.now());
+            if (state.remainingMs <= 0) {
+                stopRunningState();
+                state.remainingMs = 0;
+                renderTimer();
+            }
+        }
+
+        function setupIntervalPhase(phase, round) {
+            const workMs = Math.max(0, Number(state.interval.workMin) * 60 * 1000);
+            const restMs = Math.max(0, Number(state.interval.restMin) * 60 * 1000);
+            const phaseDuration = phase === 'work' ? workMs : restMs;
+            state.interval.phase = phase;
+            state.interval.round = round;
+            state.interval.phaseDurationMs = phaseDuration;
+            state.interval.phaseRemainingMs = phaseDuration;
+            state.interval.finishAt = Date.now() + phaseDuration;
+            if (phaseDuration === 0) {
+                advanceIntervalPhase();
+            }
+        }
+
+        function initializeIntervalRun() {
+            const rounds = Math.max(1, Math.round(Number(state.interval.rounds) || 1));
+            state.interval.rounds = rounds;
+            state.interval.started = true;
+            setupIntervalPhase('work', 1);
+        }
+
+        function advanceIntervalPhase() {
+            const restMs = Math.max(0, Number(state.interval.restMin) * 60 * 1000);
+            const totalRounds = Math.max(1, Math.round(Number(state.interval.rounds) || 1));
+            const currentRound = state.interval.round;
+
+            if (state.interval.phase === 'work') {
+                if (currentRound >= totalRounds) {
+                    stopRunningState();
+                    state.interval.phaseRemainingMs = 0;
+                    renderTimer();
+                    return;
+                }
+                if (restMs > 0) {
+                    setupIntervalPhase('rest', currentRound);
+                } else {
+                    setupIntervalPhase('work', currentRound + 1);
+                }
+            } else {
+                setupIntervalPhase('work', currentRound + 1);
+            }
+            renderTimer();
+        }
+
+        function updateIntervalRemaining() {
+            if (!state.interval.finishAt) return;
+            state.interval.phaseRemainingMs = Math.max(0, state.interval.finishAt - Date.now());
+            if (state.interval.phaseRemainingMs <= 0) {
+                advanceIntervalPhase();
+            }
+        }
+
+        function tick() {
+            if (!state.running) return;
+            if (state.timerType === 'intervall') updateIntervalRemaining();
+            else updateStandardRemaining();
+            renderTimer();
+        }
+
+        function startOrPause() {
+            if (!state.timerType) return;
+
+            if (state.running) {
+                if (state.timerType === 'intervall') {
+                    state.interval.phaseRemainingMs = Math.max(0, state.interval.finishAt - Date.now());
+                    state.interval.finishAt = null;
+                } else {
+                    state.remainingMs = Math.max(0, state.finishAt - Date.now());
+                    state.finishAt = null;
+                }
+                stopRunningState();
+                renderTimer();
+                return;
+            }
+
+            if (state.timerType === 'intervall') {
+                if (!state.interval.started || state.interval.phaseRemainingMs <= 0) {
+                    initializeIntervalRun();
+                } else {
+                    state.interval.finishAt = Date.now() + state.interval.phaseRemainingMs;
+                }
+            } else {
+                if (state.remainingMs <= 0) return;
+                state.finishAt = Date.now() + state.remainingMs;
+            }
+
+            state.running = true;
+            state.focusDismissed = false;
+            startBtn.textContent = 'Pause';
+            startBtn.classList.remove('start');
+            startBtn.classList.add('pause');
+            clearTick();
+            state.tickId = setInterval(tick, 120);
+            tick();
+        }
+
+        function resetTimer() {
+            stopRunningState();
+
+            if (state.timerType === 'intervall') {
+                state.interval.started = false;
+                state.interval.phase = 'work';
+                state.interval.round = 1;
+                state.interval.phaseDurationMs = Math.max(0, Number(state.interval.workMin) * 60 * 1000);
+                state.interval.phaseRemainingMs = state.interval.phaseDurationMs;
+            } else {
+                state.remainingMs = state.durationMs;
+                if (state.timerType === 'narrativ2') randomizePuzzleOrder();
+            }
+
+            renderTimer();
+        }
+
+        function adjustRunningTimerByMinute(deltaMinutes) {
+            if (!state.running) return;
+
+            const deltaMs = Math.round(deltaMinutes) * 60 * 1000;
+            if (deltaMs === 0) return;
+
+            if (state.timerType === 'intervall') {
+                const phaseElapsedMs = Math.max(0, state.interval.phaseDurationMs - state.interval.phaseRemainingMs);
+                const nextRemainingMs = Math.max(0, state.interval.phaseRemainingMs + deltaMs);
+                state.interval.phaseRemainingMs = nextRemainingMs;
+                state.interval.phaseDurationMs = phaseElapsedMs + nextRemainingMs;
+                state.interval.finishAt = Date.now() + state.interval.phaseRemainingMs;
+            } else {
+                const elapsedMs = Math.max(0, state.durationMs - state.remainingMs);
+                const nextRemainingMs = Math.max(0, state.remainingMs + deltaMs);
+                state.remainingMs = nextRemainingMs;
+                state.durationMs = elapsedMs + nextRemainingMs;
+                state.finishAt = Date.now() + state.remainingMs;
+            }
+
+            renderTimer();
+        }
+
+        function timerProgress() {
+            if (state.timerType === 'intervall') {
+                const d = state.interval.phaseDurationMs || 1;
+                return Math.max(0, Math.min(1, state.interval.phaseRemainingMs / d));
+            }
+            const d = state.durationMs || 1;
+            return Math.max(0, Math.min(1, state.remainingMs / d));
+        }
+
+        function getPuzzlePieceCount() {
+            return 20;
+        }
+
+        function shuffleArray(arr) {
+            const out = [...arr];
+            for (let i = out.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [out[i], out[j]] = [out[j], out[i]];
+            }
+            return out;
+        }
+
+        function randomizePuzzleOrder(pieceCount = state.puzzle.pieceCount || getPuzzlePieceCount()) {
+            state.puzzle.revealOrder = shuffleArray(Array.from({ length: pieceCount }, (_, i) => i));
+        }
+
+        function ensurePuzzlePieces() {
+            const pieceCount = getPuzzlePieceCount();
+            if (state.puzzle.pieceCount === pieceCount && puzzleFrame.children.length === pieceCount) return;
+
+            state.puzzle.pieceCount = pieceCount;
+            randomizePuzzleOrder(pieceCount);
+            puzzleFrame.innerHTML = '';
+
+            const cols = Math.max(2, Math.ceil(Math.sqrt(pieceCount)));
+            const rows = Math.max(2, Math.ceil(pieceCount / cols));
+
+            for (let i = 0; i < pieceCount; i++) {
+                const piece = document.createElement('div');
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                piece.className = 'puzzle-piece';
+                piece.style.setProperty('--cols', String(cols));
+                piece.style.setProperty('--rows', String(rows));
+                piece.style.setProperty('--col', String(col));
+                piece.style.setProperty('--row', String(row));
+                piece.style.backgroundSize = `${cols * 100}% ${rows * 100}%`;
+                const posX = cols === 1 ? 0 : (col / (cols - 1)) * 100;
+                const posY = rows === 1 ? 0 : (row / (rows - 1)) * 100;
+                piece.style.backgroundPosition = `${posX}% ${posY}%`;
+                puzzleFrame.appendChild(piece);
+            }
+        }
+
+        function getDisplayConfig() {
+            if (state.timerType === 'intervall') {
+                const isWork = state.interval.phase === 'work';
+                const totalRounds = Math.max(1, Math.round(Number(state.interval.rounds) || 1));
+                return {
+                    timeMs: state.interval.phaseRemainingMs,
+                    remainingMs: state.interval.phaseRemainingMs,
+                    phaseLabel: isWork ? 'Arbeitsphase' : 'Pausenphase',
+                    context: `Runde ${state.interval.round} von ${totalRounds}`,
+                    progress: timerProgress(),
+                    ringMode: isWork ? 'focus' : 'break'
+                };
+            }
+
+            return {
+                timeMs: state.remainingMs,
+                remainingMs: state.remainingMs,
+                phaseLabel: state.timerType === 'ampel'
+                    ? 'Ampel läuft'
+                    : (state.timerType === 'sanduhr'
+                        ? 'Sanduhr läuft'
+                        : (state.timerType === 'narrativ'
+                            ? 'Projektfahrt läuft'
+                            : (state.timerType === 'narrativ2'
+                                ? 'Puzzle wächst'
+                                : (state.timerType === 'atmo' ? 'Ruhelicht aktiv' : 'Fokuszeit')))),
+                context: state.running ? 'Timer aktiv' : 'Bereit zum Start',
+                progress: timerProgress(),
+                ringMode: state.timerType === 'ampel'
+                    ? 'ampel'
+                    : (state.timerType === 'sanduhr'
+                        ? 'sand'
+                        : (state.timerType === 'narrativ'
+                            ? 'narrative'
+                            : (state.timerType === 'narrativ2'
+                                ? 'puzzle'
+                                : (state.timerType === 'atmo' ? 'atmo' : 'focus'))))
+            };
+        }
+
+        function ringGradient(progress, mode, remainingMs, totalMs = 0) {
+            const deg = progress * 360;
+            if (mode === 'ampel') {
+                const ms = Math.max(0, Number(remainingMs) || 0);
+                const duration = Math.max(1, Number(totalMs) || 1);
+                const redThresholdMs = duration * 0.10;
+                const yellowThresholdMs = duration * 0.25;
+                const redDeg = Math.min(360, (redThresholdMs / duration) * 360);
+                const yellowDeg = Math.min(360, (yellowThresholdMs / duration) * 360);
+
+                if (ms <= redThresholdMs) {
+                    return `conic-gradient(#d94343 0deg ${deg}deg, rgba(217, 67, 67, 0.16) ${deg}deg 360deg)`;
+                }
+                if (ms <= yellowThresholdMs) {
+                    return `conic-gradient(#d94343 0deg ${redDeg}deg, #f3b51c ${redDeg}deg ${deg}deg, rgba(243, 181, 28, 0.16) ${deg}deg 360deg)`;
+                }
+                return `conic-gradient(#d94343 0deg ${redDeg}deg, #f3b51c ${redDeg}deg ${yellowDeg}deg, #2da36a ${yellowDeg}deg ${deg}deg, rgba(45, 163, 106, 0.12) ${deg}deg 360deg)`;
+            }
+            if (mode === 'break') {
+                return `conic-gradient(#f3b51c 0deg ${deg}deg, rgba(243, 181, 28, 0.16) ${deg}deg 360deg)`;
+            }
+            if (mode === 'sand') {
+                return `conic-gradient(#e2a43a 0deg ${deg}deg, rgba(226, 164, 58, 0.16) ${deg}deg 360deg)`;
+            }
+            if (mode === 'narrative') {
+                return 'transparent';
+            }
+            if (mode === 'puzzle') {
+                return 'transparent';
+            }
+            if (mode === 'atmo') {
+                return 'transparent';
+            }
+            return `conic-gradient(#0f9e99 0deg ${deg}deg, rgba(15, 158, 153, 0.14) ${deg}deg 360deg)`;
+        }
+
+        function renderStandardSettings(force = false) {
+            const minutes = Math.round(state.durationMs / 60000);
+            const needsBuild = force || settingsPanel.dataset.mode !== 'standard';
+            if (needsBuild) {
+                settingsPanel.innerHTML = `
+                    <input class="slider" id="minuteSlider" type="range" min="0" max="60" step="1" value="${minutes}" aria-label="Minuten einstellen" />
+                `;
+                settingsPanel.dataset.mode = 'standard';
+
+                const slider = document.getElementById('minuteSlider');
+                slider.addEventListener('input', () => {
+                    if (state.running) return;
+                    setDurationMinutes(Number(slider.value));
+                });
+            }
+
+            const slider = document.getElementById('minuteSlider');
+            if (slider) slider.value = String(minutes);
+        }
+
+        function renderIntervalSettings(force = false) {
+            const runningKey = state.running ? '1' : '0';
+            const needsBuild = force || settingsPanel.dataset.mode !== 'interval' || settingsPanel.dataset.running !== runningKey;
+
+            if (needsBuild) {
+                settingsPanel.innerHTML = `
+                    <div class="interval-grid">
+                        <div class="field">
+                            <label for="workMin">Arbeitszeit (Min)</label>
+                            <input class="slider" id="workMin" type="range" min="0" max="60" step="1" value="${state.interval.workMin}" ${state.running ? 'disabled' : ''}>
+                            <div class="subtle" id="workMinValue">${state.interval.workMin} min</div>
+                        </div>
+                        <div class="field">
+                            <label for="restMin">Pausenzeit (Min)</label>
+                            <input class="slider" id="restMin" type="range" min="0" max="60" step="1" value="${state.interval.restMin}" ${state.running ? 'disabled' : ''}>
+                            <div class="subtle" id="restMinValue">${state.interval.restMin} min</div>
+                        </div>
+                        <div class="field">
+                            <label for="rounds">Runden</label>
+                            <input class="slider" id="rounds" type="range" min="1" max="20" step="1" value="${state.interval.rounds}" ${state.running ? 'disabled' : ''}>
+                            <div class="subtle" id="roundsValue">${state.interval.rounds}</div>
+                        </div>
+                    </div>
+                `;
+                settingsPanel.dataset.mode = 'interval';
+                settingsPanel.dataset.running = runningKey;
+
+                if (!state.running) {
+                    const workInput = document.getElementById('workMin');
+                    const restInput = document.getElementById('restMin');
+                    const roundsInput = document.getElementById('rounds');
+                    const workMinValue = document.getElementById('workMinValue');
+                    const restMinValue = document.getElementById('restMinValue');
+                    const roundsValue = document.getElementById('roundsValue');
+
+                    workInput.addEventListener('input', () => {
+                        state.interval.workMin = Math.max(0, Math.min(60, Number(workInput.value) || 0));
+                        workMinValue.textContent = `${state.interval.workMin} min`;
+                        resetTimer();
+                    });
+
+                    restInput.addEventListener('input', () => {
+                        state.interval.restMin = Math.max(0, Math.min(60, Number(restInput.value) || 0));
+                        restMinValue.textContent = `${state.interval.restMin} min`;
+                        resetTimer();
+                    });
+
+                    roundsInput.addEventListener('input', () => {
+                        state.interval.rounds = Math.max(1, Math.min(20, Number(roundsInput.value) || 1));
+                        roundsValue.textContent = String(state.interval.rounds);
+                        resetTimer();
+                    });
+                }
+            } else if (!state.running) {
+                const workInput = document.getElementById('workMin');
+                const restInput = document.getElementById('restMin');
+                const roundsInput = document.getElementById('rounds');
+                const workMinValue = document.getElementById('workMinValue');
+                const restMinValue = document.getElementById('restMinValue');
+                const roundsValue = document.getElementById('roundsValue');
+                if (workInput) workInput.value = String(state.interval.workMin);
+                if (restInput) restInput.value = String(state.interval.restMin);
+                if (roundsInput) roundsInput.value = String(state.interval.rounds);
+                if (workMinValue) workMinValue.textContent = `${state.interval.workMin} min`;
+                if (restMinValue) restMinValue.textContent = `${state.interval.restMin} min`;
+                if (roundsValue) roundsValue.textContent = String(state.interval.rounds);
+            }
+        }
+
+        function renderTimer() {
+            if (!state.timerType) return;
+
+            const meta = timerMeta[state.timerType];
+            timerTitle.textContent = meta.title;
+            timerSubtitle.textContent = meta.subtitle;
+
+            if (state.timerType === 'intervall') renderIntervalSettings();
+            else renderStandardSettings();
+
+            const display = getDisplayConfig();
+            const progress = display.progress;
+            const sandMode = state.timerType === 'sanduhr';
+            const narrativeMode = state.timerType === 'narrativ';
+            const puzzleMode = state.timerType === 'narrativ2';
+            const atmoMode = state.timerType === 'atmo';
+
+            timeText.textContent = formatTime(display.timeMs);
+            if (sandMode) {
+                timeText.style.display = '';
+                timeText.style.visibility = state.showTime ? 'visible' : 'hidden';
+                timeText.style.opacity = state.showTime ? '1' : '0';
+            } else {
+                timeText.style.display = state.showTime ? '' : 'none';
+                timeText.style.visibility = 'visible';
+                timeText.style.opacity = '1';
+            }
+            phaseText.textContent = display.phaseLabel;
+            contextText.textContent = display.context;
+            progressFill.style.width = `${Math.max(0, Math.min(100, progress * 100))}%`;
+            const totalForRing = state.timerType === 'ampel' ? state.durationMs : 0;
+
+            timerStage.classList.toggle('sand-only', sandMode);
+            timerStage.classList.toggle('narrative-only', narrativeMode);
+            timerStage.classList.toggle('puzzle-only', puzzleMode);
+            timerStage.classList.toggle('atmo-only', atmoMode);
+            countdownRing.classList.toggle('sand-mode', sandMode);
+            countdownRing.classList.toggle('narrative-mode', narrativeMode);
+            countdownRing.classList.toggle('puzzle-mode', puzzleMode);
+            countdownRing.classList.toggle('atmo-mode', atmoMode);
+            const ringCore = countdownRing.querySelector('.ring-core');
+            if (ringCore) ringCore.classList.toggle('ring-text-mode', !sandMode && !narrativeMode && !puzzleMode && !atmoMode);
+            hourglass.classList.toggle('visible', sandMode);
+            hourglass.classList.toggle('running', sandMode && state.running && display.timeMs > 0);
+            narrativeBoard.classList.toggle('visible', narrativeMode);
+            puzzleBoard.classList.toggle('visible', puzzleMode);
+            atmoBoard.classList.toggle('visible', atmoMode);
+            progressTrack.style.display = (sandMode || narrativeMode || puzzleMode || atmoMode) ? 'none' : '';
+
+            if (sandMode || narrativeMode || puzzleMode || atmoMode) {
+                countdownRing.style.background = 'transparent';
+            } else {
+                countdownRing.style.background = ringGradient(progress, display.ringMode, display.remainingMs, totalForRing);
+            }
+
+            if (sandMode) {
+                const topPct = Math.max(0, Math.min(100, progress * 100));
+                const bottomPct = 100 - topPct;
+                sandTop.style.height = `${topPct}%`;
+                sandBottom.style.height = `${bottomPct}%`;
+            }
+
+            if (narrativeMode) {
+                const traveledPct = Math.max(0, Math.min(100, (1 - progress) * 100));
+                const carLeft = Math.max(4, Math.min(96, traveledPct));
+                narrativeCar.style.left = `${carLeft}%`;
+                narrativeProgressFill.style.width = `${traveledPct}%`;
+            }
+
+            if (puzzleMode) {
+                ensurePuzzlePieces();
+                const elapsedMs = Math.max(0, state.durationMs - state.remainingMs);
+                const pieceStepMs = state.durationMs > 0 ? state.durationMs / state.puzzle.pieceCount : 0;
+                let visiblePieces = pieceStepMs > 0 ? Math.floor(elapsedMs / pieceStepMs) : 0;
+                if (state.remainingMs <= 0) visiblePieces = state.puzzle.pieceCount;
+                visiblePieces = Math.max(0, Math.min(state.puzzle.pieceCount, visiblePieces));
+                const visibleSet = new Set(state.puzzle.revealOrder.slice(0, visiblePieces));
+
+                Array.from(puzzleFrame.children).forEach((piece, idx) => {
+                    piece.classList.toggle('visible', visibleSet.has(idx));
+                });
+
+                const puzzlePct = state.puzzle.pieceCount > 0 ? (visiblePieces / state.puzzle.pieceCount) * 100 : 0;
+                puzzleProgressFill.style.width = `${puzzlePct}%`;
+            }
+
+            if (atmoMode) {
+                const remaining = Math.max(0, display.timeMs);
+                const total = Math.max(1, state.durationMs || 1);
+                const redThresholdMs = total * 0.10;
+                const yellowThresholdMs = total * 0.25;
+                let ledState = 'green';
+                let caption = 'Ruhige Arbeitszeit';
+                if (remaining <= redThresholdMs) {
+                    ledState = 'red';
+                    caption = '';
+                } else if (remaining <= yellowThresholdMs) {
+                    ledState = 'yellow';
+                    caption = '';
+                }
+
+                const previousLedState = atmoLed.dataset.state;
+                if (previousLedState && previousLedState !== ledState) {
+                    atmoLed.classList.remove('color-fade');
+                    void atmoLed.offsetWidth;
+                    atmoLed.classList.add('color-fade');
+                }
+                atmoLed.classList.remove('green', 'yellow', 'red');
+                atmoLed.classList.add(ledState);
+                atmoLed.dataset.state = ledState;
+                atmoCaption.textContent = caption;
+            }
+
+            if (state.running) {
+                startBtn.textContent = 'Pause';
+                startBtn.classList.remove('start');
+                startBtn.classList.add('pause');
+            } else {
+                startBtn.textContent = 'Start';
+                startBtn.classList.remove('pause');
+                startBtn.classList.add('start');
+            }
+
+            minusMinuteBtn.hidden = !state.running;
+            plusMinuteBtn.hidden = !state.running;
+            appShell.classList.toggle('timer-focus-active', state.view === 'timer' && state.running && !state.focusDismissed);
+
+            // Broadcast state to parent (React)
+            if (window.parent !== window) {
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get('embedded')) {
+                    const minutes = state.timerType === 'intervall' ? state.interval.workMin : Math.round(state.durationMs / 60000);
+                    const msg = {
+                        type: 'TIMER_STATE',
+                        timerId: urlParams.get('id'), // if we want to add an ID later
+                        running: state.running,
+                        minutes: minutes
+                    };
+                    if (state.timerType === 'intervall') {
+                        msg.restMinutes = state.interval.restMin;
+                        msg.rounds = state.interval.rounds;
+                    }
+                    window.parent.postMessage(msg, '*');
+                }
+            }
+        }
+
+        function selectTimer(type) {
+            const meta = timerMeta[type];
+            if (!meta) return;
+
+            stopRunningState();
+            state.timerType = type;
+
+            if (type === 'intervall') {
+                state.interval.workMin = meta.defaults;
+                state.interval.restMin = 3;
+                state.interval.rounds = 3;
+                state.interval.started = false;
+                state.interval.phase = 'work';
+                state.interval.round = 1;
+                state.interval.phaseDurationMs = meta.defaults * 60 * 1000;
+                state.interval.phaseRemainingMs = state.interval.phaseDurationMs;
+            } else {
+                state.durationMs = meta.defaults * 60 * 1000;
+                state.remainingMs = state.durationMs;
+                if (type === 'narrativ2') {
+                    ensurePuzzlePieces();
+                    randomizePuzzleOrder();
+                }
+            }
+
+            showScreen('timer');
+            if (type === 'intervall') renderIntervalSettings(true);
+            else renderStandardSettings(true);
+            renderTimer();
+        }
+
+        timerCards.addEventListener('click', (event) => {
+            const card = event.target.closest('[data-timer]');
+            if (!card) return;
+            selectTimer(card.dataset.timer);
+        });
+
+        startBtn.addEventListener('click', startOrPause);
+        resetBtn.addEventListener('click', resetTimer);
+        minusMinuteBtn.addEventListener('click', () => adjustRunningTimerByMinute(-1));
+        plusMinuteBtn.addEventListener('click', () => adjustRunningTimerByMinute(1));
+        appShell.addEventListener('pointerdown', (event) => {
+            if (!state.running) return;
+            if (state.focusDismissed) return;
+            if (state.view !== 'timer') return;
+            if (event.target.closest('.timer-stage')) return;
+            state.focusDismissed = true;
+            renderTimer();
+        });
+        showTimeToggle.addEventListener('change', () => {
+            state.showTime = showTimeToggle.checked;
+            renderTimer();
+        });
+
+        backBtn.addEventListener('click', () => {
+            stopRunningState();
+            state.timerType = null;
+            showScreen('home');
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (state.view !== 'timer') return;
+            if (event.key === ' ') {
+                event.preventDefault();
+                startOrPause();
+            } else if (event.key.toLowerCase() === 'r') {
+                resetTimer();
+            } else if (event.key === 'Escape') {
+                backBtn.click();
+            }
+        });
+
+        // PostMessage listener
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+            if (!data || !data.action) return;
+            
+            if (data.action === 'startOrPause') {
+                startOrPause();
+            } else if (data.action === 'reset') {
+                resetTimer();
+            } else if (data.action === 'setDuration') {
+                if (state.timerType === 'intervall') {
+                    state.interval.workMin = Math.max(1, Math.min(60, data.value));
+                    resetTimer();
+                } else {
+                    setDurationMinutes(data.value);
+                }
+            } else if (data.action === 'setRestDuration') {
+                if (state.timerType === 'intervall') {
+                    state.interval.restMin = Math.max(0, Math.min(60, data.value));
+                    resetTimer();
+                }
+            } else if (data.action === 'setRounds') {
+                if (state.timerType === 'intervall') {
+                    state.interval.rounds = Math.max(1, Math.min(20, data.value));
+                    resetTimer();
+                }
+            } else if (data.action === 'toggleTime') {
+                state.showTime = data.value;
+                renderTimer();
+            }
+        });
+
+        // Autostart via URL parameters
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const typeParam = params.get('type');
+            
+            if (typeParam && timerMeta[typeParam]) {
+                selectTimer(typeParam);
+                
+                // Hide unnecessary UI elements when embedded
+                if (window !== window.top || params.get('embedded') === 'true') {
+                    // Inject embedded-specific CSS overrides
+                    const embeddedStyle = document.createElement('style');
+                    embeddedStyle.textContent = `
+                        body { overflow: hidden !important; background: transparent !important; }
+                        html { background: transparent !important; }
+                        .app { 
+                            height: 100dvh !important; 
+                            min-height: auto !important; 
+                            padding: 0 !important; 
+                            display: flex !important; 
+                            align-items: center !important; 
+                            justify-content: center !important; 
+                        }
+                        .timer-stage { 
+                            background: transparent !important; 
+                            border: none !important; 
+                            box-shadow: none !important; 
+                            padding: 0 !important; 
+                            margin: 0 !important;
+                            display: flex !important; 
+                            align-items: center !important; 
+                            justify-content: center !important; 
+                            width: 100% !important; 
+                            height: 100% !important; 
+                            overflow: hidden !important;
+                        }
+                        .display-zone {
+                            width: 100% !important;
+                            height: 100% !important;
+                            padding: 0 !important;
+                            gap: 0 !important;
+                        }
+                        /* Hide phase string, subtle context text, and the linear progress track */
+                        .phase-text, #contextText, #progressTrack, .atmo-caption {
+                            display: none !important;
+                        }
+                        /* Make graphics fill the space as much as possible */
+                        .countdown-ring {
+                            width: 100vmin !important;
+                            height: 100vmin !important;
+                            max-width: none !important;
+                            max-height: none !important;
+                            min-width: 0 !important;
+                            min-height: 0 !important;
+                        }
+                        /* Adjust sizes for specific modes to remove scrollbars */
+                        .countdown-ring.sand-mode {
+                            width: 100% !important;
+                            height: 100% !important;
+                            max-height: 100dvh !important;
+                            display: grid !important;
+                            place-items: center !important;
+                        }
+                        .countdown-ring.sand-mode .ring-core {
+                            display: flex !important;
+                            flex-direction: column !important;
+                            align-items: center !important;
+                            justify-content: center !important;
+                            gap: 8px !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                        }
+                        .timer-stage.sand-only .time-text {
+                            margin: 0 !important;
+                            font-size: clamp(1.8rem, 8vmin, 4rem) !important;
+                            line-height: 1 !important;
+                        }
+                        .hourglass {
+                            width: min(calc(100% - 12px), 220px) !important;
+                            height: auto !important;
+                            aspect-ratio: 180/280 !important;
+                            max-width: calc(100% - 12px) !important;
+                            max-height: calc(100% - 12px) !important;
+                            margin: auto !important;
+                            border-width: 6px !important;
+                            padding: 8px !important;
+                            box-sizing: border-box !important;
+                        }
+                        /* Narrative and puzzle scale to fit */
+                        .countdown-ring.narrative-mode,
+                        .countdown-ring.puzzle-mode,
+                        .countdown-ring.atmo-mode {
+                            width: 100%;
+                            height: 100%;
+                            max-height: 100dvh !important;
+                            max-width: 100vw !important;
+                        }
+                        /* Increase time font dramatically since we hid the title text */
+                        .ring-core:not(.ring-text-mode) .time-text {
+                            font-size: clamp(3rem, 16vmin, 12rem) !important;
+                        }
+                    `;
+                    document.head.appendChild(embeddedStyle);
+
+                    document.querySelector('.topbar')?.remove();
+                    document.querySelector('.timer-header')?.remove();
+                    document.querySelector('.controls')?.remove();
+                    document.querySelector('.settings-panel')?.remove();
+                    const backButton = document.getElementById('backBtn');
+                    if(backButton) backButton.remove();
+
+                    // Initial broadcast
+                    renderTimer();
+                }
+            }
+        });
+    </script>
+</body>
+</html>
