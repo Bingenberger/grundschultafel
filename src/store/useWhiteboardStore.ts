@@ -77,6 +77,7 @@ interface WhiteboardState {
   // Persistence
   notebookId: string | null;
   notebookName: string | null;
+  notebookLoadSignal: number;
   setNotebook: (id: string, name: string) => void;
   loadNotebookState: (id: string, name: string, pages: Page[], journalImages?: JournalImage[]) => void;
   resetNotebook: () => void;
@@ -175,14 +176,16 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
 
   notebookId: null,
   notebookName: null,
+  notebookLoadSignal: 0,
   setNotebook: (id, name) => set({ notebookId: id, notebookName: name }),
-  loadNotebookState: (id, name, pages, journalImages = []) => set({
+  loadNotebookState: (id, name, pages, journalImages = []) => set((state) => ({
     notebookId: id,
     notebookName: name,
+    notebookLoadSignal: state.notebookLoadSignal + 1,
     pages: pages,
     currentPageId: pages[0]?.id || uuidv4(),
     journalImages
-  }),
+  })),
   resetNotebook: () => {
     const newId = uuidv4();
     set((state) => ({

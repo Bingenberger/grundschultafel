@@ -1292,52 +1292,59 @@ export default function Whiteboard() {
   const currentPageId = useWhiteboardStore((state) => state.currentPageId);
   const pages = useWhiteboardStore((state) => state.pages);
   const updatePageData = useWhiteboardStore((state) => state.updatePageData);
+  const notebookLoadSignal = useWhiteboardStore((state) => state.notebookLoadSignal);
   const prevPageId = useRef(currentPageId);
+  const prevNotebookLoadSignal = useRef(notebookLoadSignal);
 
   // Sync Canvas with Page State
   useEffect(() => {
     if (!fabricCanvas) return;
-    
-    if (prevPageId.current !== currentPageId) {
-      // 1. Save old state
+
+    const pageChanged = prevPageId.current !== currentPageId;
+    const notebookLoaded = prevNotebookLoadSignal.current !== notebookLoadSignal;
+
+    if (!pageChanged && !notebookLoaded) return;
+
+    // Save old page state only when switching pages within the same notebook
+    if (pageChanged) {
       const oldJson: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
       updatePageData(prevPageId.current, oldJson);
-      
-      // 2. Load new state
-      const newPage = pages.find(p => p.id === currentPageId);
-      if (newPage?.canvasData) {
-        void fabricCanvas
-          .loadFromJSON(newPage.canvasData)
-          .then(() => {
-            fabricCanvas.getObjects().forEach((obj) => {
-              if (isTextObject(obj)) {
-                obj.controls = createTextControls((target, canvas) => {
-                  canvas.remove(target);
-                  canvas.requestRenderAll();
-                  const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-                  updatePageData(currentPageId, canvas.toJSON());
-                  setSelectedTextParams(null);
-                });
-                obj.set({
-                  lockScalingFlip: true,
-                  minWidth: obj.minWidth || 120,
-                });
-              }
-            });
-            fabricCanvas.requestRenderAll();
-          })
-          .catch((error) => {
-            console.error('Fehler beim Laden des Canvas-JSON:', error);
-          });
-      } else {
-        fabricCanvas.clear();
-        fabricCanvas.backgroundColor = '#ffffff';
-        fabricCanvas.renderAll();
-      }
-      
-      prevPageId.current = currentPageId;
     }
-  }, [currentPageId, fabricCanvas, pages, updatePageData]);
+
+    const newPage = pages.find(p => p.id === currentPageId);
+    if (newPage?.canvasData) {
+      void fabricCanvas
+        .loadFromJSON(newPage.canvasData)
+        .then(() => {
+          fabricCanvas.getObjects().forEach((obj) => {
+            if (isTextObject(obj)) {
+              obj.controls = createTextControls((target, canvas) => {
+                canvas.remove(target);
+                canvas.requestRenderAll();
+                const { updatePageData, currentPageId } = useWhiteboardStore.getState();
+                updatePageData(currentPageId, canvas.toJSON());
+                setSelectedTextParams(null);
+              });
+              obj.set({
+                lockScalingFlip: true,
+                minWidth: obj.minWidth || 120,
+              });
+            }
+          });
+          fabricCanvas.requestRenderAll();
+        })
+        .catch((error) => {
+          console.error('Fehler beim Laden des Canvas-JSON:', error);
+        });
+    } else {
+      fabricCanvas.clear();
+      fabricCanvas.backgroundColor = '#ffffff';
+      fabricCanvas.renderAll();
+    }
+
+    prevPageId.current = currentPageId;
+    prevNotebookLoadSignal.current = notebookLoadSignal;
+  }, [currentPageId, notebookLoadSignal, fabricCanvas, pages, updatePageData]);
 
   // Save changes continually when objects modify or draw ends, so that we don't lose data if we leave the app
   // Debouncing could be better here, but for now we'll do it on path:created and object:modified
