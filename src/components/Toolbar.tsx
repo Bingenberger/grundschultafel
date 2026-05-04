@@ -70,8 +70,23 @@ export default function Toolbar() {
         .then(res => res.json())
         .then(data => {
           if (data.imageUrl) {
-            triggerAddImage(data.imageUrl);
-            setShowQrModal(false);
+            // Convert to data URL so Fabric.js can load it reliably (same as local upload)
+            fetch(data.imageUrl)
+              .then(r => r.blob())
+              .then(blob => new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              }))
+              .then(dataUrl => {
+                triggerAddImage(dataUrl);
+                setShowQrModal(false);
+              })
+              .catch(err => {
+                console.error('[QR-Upload] Bild konnte nicht geladen werden:', err);
+                setShowQrModal(false);
+              });
           }
         })
         .catch(console.error);
