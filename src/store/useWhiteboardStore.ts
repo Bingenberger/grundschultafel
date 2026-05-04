@@ -89,6 +89,16 @@ interface WhiteboardState {
   setJournalOpen: (open: boolean) => void;
   journalImages: JournalImage[];
   setJournalImages: (images: JournalImage[]) => void;
+
+  // Undo / Redo
+  undoSignal: number;
+  triggerUndo: () => void;
+  redoSignal: number;
+  triggerRedo: () => void;
+  canUndo: boolean;
+  setCanUndo: (v: boolean) => void;
+  canRedo: boolean;
+  setCanRedo: (v: boolean) => void;
 }
 
 const initialPageId = uuidv4();
@@ -203,5 +213,14 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
   toggleJournal: () => set((state) => ({ isJournalOpen: !state.isJournalOpen })),
   setJournalOpen: (open) => set({ isJournalOpen: open }),
   journalImages: [],
-  setJournalImages: (images) => set({ journalImages: images })
+  setJournalImages: (images) => set({ journalImages: images }),
+
+  undoSignal: 0,
+  triggerUndo: () => set((state) => ({ undoSignal: state.undoSignal + 1 })),
+  redoSignal: 0,
+  triggerRedo: () => set((state) => ({ redoSignal: state.redoSignal + 1 })),
+  canUndo: false,
+  setCanUndo: (v) => set({ canUndo: v }),
+  canRedo: false,
+  setCanRedo: (v) => set({ canRedo: v }),
 }));

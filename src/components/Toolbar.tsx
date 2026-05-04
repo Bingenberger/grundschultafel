@@ -1,5 +1,5 @@
 import { useWhiteboardStore, ToolType } from '@/store/useWhiteboardStore';
-import { MousePointer2, Pen, Eraser, Trash2, Image as ImageIcon, ImagePlus, QrCode, X, Youtube, Camera, Type, Briefcase, Shapes, Minus, PlusSquare, PaintBucket, Highlighter } from 'lucide-react';
+import { MousePointer2, Pen, Eraser, Trash2, Image as ImageIcon, ImagePlus, QrCode, X, Youtube, Camera, Type, Briefcase, Shapes, Minus, PlusSquare, PaintBucket, Highlighter, Undo2, Redo2 } from 'lucide-react';
 import { useRef, useState, useEffect } from 'react';
 import GalleryModal from './GalleryModal';
 import YoutubeModal from './YoutubeModal';
@@ -15,6 +15,7 @@ export default function Toolbar() {
     isStraightLineMode, setStraightLineMode,
     highlighterColor, setHighlighterColor, highlighterWidth, setHighlighterWidth,
     eraserWidth, setEraserWidth,
+    canUndo, triggerUndo, canRedo, triggerRedo,
   } = useWhiteboardStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const penSettingsRef = useRef<HTMLDivElement>(null);
@@ -665,6 +666,44 @@ export default function Toolbar() {
 
             {showShapes && <ShapeModal onClose={() => setShowShapes(false)} />}
 	        </div>
+
+      <div style={{ width: '1px', height: '30px', backgroundColor: 'var(--border)', margin: '0 2px' }} />
+
+      <button
+        onClick={triggerUndo}
+        disabled={!canUndo}
+        style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          background: 'none', border: 'none', cursor: canUndo ? 'pointer' : 'default',
+          padding: '8px', borderRadius: '12px',
+          color: canUndo ? 'var(--foreground)' : 'var(--border)',
+          transition: 'all 0.2s',
+        }}
+        onMouseEnter={(e) => { if (canUndo) e.currentTarget.style.backgroundColor = 'var(--surface)'; }}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        title="Rückgängig (Strg+Z)"
+      >
+        <Undo2 size={20} />
+        <span style={{ fontSize: '0.65rem', marginTop: '2px', fontWeight: 'bold' }}>Zurück</span>
+      </button>
+
+      <button
+        onClick={triggerRedo}
+        disabled={!canRedo}
+        style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          background: 'none', border: 'none', cursor: canRedo ? 'pointer' : 'default',
+          padding: '8px', borderRadius: '12px',
+          color: canRedo ? 'var(--foreground)' : 'var(--border)',
+          transition: 'all 0.2s',
+        }}
+        onMouseEnter={(e) => { if (canRedo) e.currentTarget.style.backgroundColor = 'var(--surface)'; }}
+        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+        title="Wiederholen (Strg+Y)"
+      >
+        <Redo2 size={20} />
+        <span style={{ fontSize: '0.65rem', marginTop: '2px', fontWeight: 'bold' }}>Vor</span>
+      </button>
 
       <div style={{ width: '1px', height: '30px', backgroundColor: 'var(--border)', margin: '0 2px' }} />
 

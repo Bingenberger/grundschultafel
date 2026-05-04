@@ -364,6 +364,34 @@ export default function Whiteboard() {
   const containerRef = useRef<HTMLDivElement>(null);
   const eraserCursorRef = useRef<HTMLDivElement>(null);
   const [fabricCanvas, setFabricCanvas] = useState<fabric.Canvas | null>(null);
+
+  // --- Undo / Redo history (per page, keyed by pageId) ---
+  const CANVAS_JSON_KEYS = ['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke'];
+  const MAX_HISTORY = 50;
+  const historyRef = useRef<Record<string, { stack: any[]; index: number }>>({});
+  const isHistoryLocked = useRef(false);
+  const currentPageIdRef = useRef('');
+  const historyDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getPageHistory = (pageId: string) => {
+    if (!historyRef.current[pageId]) {
+      historyRef.current[pageId] = { stack: [], index: -1 };
+    }
+    return historyRef.current[pageId];
+  };
+
+  const pushToHistory = (pageId: string, json: any) => {
+    const hist = getPageHistory(pageId);
+    if (hist.index < hist.stack.length - 1) {
+      hist.stack = hist.stack.slice(0, hist.index + 1);
+    }
+    hist.stack.push(json);
+    if (hist.stack.length > MAX_HISTORY) hist.stack.shift();
+    hist.index = hist.stack.length - 1;
+    const store = useWhiteboardStore.getState();
+    store.setCanUndo(hist.index > 0);
+    store.setCanRedo(false);
+  };
   const [youtubeVideos, setYoutubeVideos] = useState<YoutubeRect[]>([]);
   const [timers, setTimers] = useState<TimerRect[]>([]);
   const [selectedTimerId, setSelectedTimerId] = useState<string | null>(null);
@@ -391,6 +419,12 @@ export default function Whiteboard() {
   const highlighterColor = useWhiteboardStore((state) => state.highlighterColor);
   const highlighterWidth = useWhiteboardStore((state) => state.highlighterWidth);
   const eraserWidth = useWhiteboardStore((state) => state.eraserWidth);
+  const undoSignal = useWhiteboardStore((state) => state.undoSignal);
+  const redoSignal = useWhiteboardStore((state) => state.redoSignal);
+  const currentPageId = useWhiteboardStore((state) => state.currentPageId);
+  const pages = useWhiteboardStore((state) => state.pages);
+  const updatePageData = useWhiteboardStore((state) => state.updatePageData);
+  const notebookLoadSignal = useWhiteboardStore((state) => state.notebookLoadSignal);
 
   const createSmallDeleteControl = (onDelete: (target: fabric.Object, canvas: fabric.Canvas) => void) => new fabric.Control({
     x: 0.5,
@@ -591,6 +625,117 @@ export default function Whiteboard() {
       if (eraserCursorRef.current) eraserCursorRef.current.style.display = 'none';
     };
   }, [fabricCanvas, activeTool]);
+
+  // Keep currentPageIdRef in sync so debounce callbacks always have the current page
+  useEffect(() => {
+    currentPageIdRef.current = currentPageId;
+  }, [currentPageId]);
+
+  // Listen to Fabric events and push canvas snapshots into the history stack
+  useEffect(() => {
+    if (!fabricCanvas) return;
+
+    const schedulePush = () => {
+      if (historyDebounceTimer.current) clearTimeout(historyDebounceTimer.current);
+      historyDebounceTimer.current = setTimeout(() => {
+        historyDebounceTimer.current = null;
+        if (isHistoryLocked.current || !fabricCanvas) return;
+        const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+        pushToHistory(currentPageIdRef.current, json);
+      }, 80);
+    };
+
+    const onPathCreated = () => {
+      if (isHistoryLocked.current) return;
+      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      pushToHistory(currentPageIdRef.current, json);
+    };
+
+    const onObjectModified = () => {
+      if (isHistoryLocked.current) return;
+      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      pushToHistory(currentPageIdRef.current, json);
+    };
+
+    const onObjectAdded = (e: any) => {
+      if (isHistoryLocked.current) return;
+      if (e.target?.type === 'path') return; // path:created handles this
+      schedulePush();
+    };
+
+    const onObjectRemoved = () => {
+      if (isHistoryLocked.current) return;
+      schedulePush();
+    };
+
+    fabricCanvas.on('path:created', onPathCreated);
+    fabricCanvas.on('object:modified', onObjectModified);
+    fabricCanvas.on('object:added', onObjectAdded);
+    fabricCanvas.on('object:removed', onObjectRemoved);
+
+    return () => {
+      fabricCanvas.off('path:created', onPathCreated);
+      fabricCanvas.off('object:modified', onObjectModified);
+      fabricCanvas.off('object:added', onObjectAdded);
+      fabricCanvas.off('object:removed', onObjectRemoved);
+    };
+  }, [fabricCanvas]);
+
+  // Keyboard shortcuts: Ctrl+Z = Undo, Ctrl+Y / Ctrl+Shift+Z = Redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.key === 'z' || e.key === 'Z') {
+        if (e.shiftKey) {
+          useWhiteboardStore.getState().triggerRedo();
+        } else {
+          useWhiteboardStore.getState().triggerUndo();
+        }
+        e.preventDefault();
+      } else if (e.key === 'y' || e.key === 'Y') {
+        useWhiteboardStore.getState().triggerRedo();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Undo: restore previous history entry
+  useEffect(() => {
+    if (!fabricCanvas || undoSignal === 0) return;
+    const hist = getPageHistory(currentPageId);
+    if (hist.index <= 0) return;
+    hist.index--;
+    const json = hist.stack[hist.index];
+    isHistoryLocked.current = true;
+    void (fabricCanvas as any).loadFromJSON(json).then(() => {
+      fabricCanvas.requestRenderAll();
+      useWhiteboardStore.getState().updatePageData(currentPageId, json);
+      isHistoryLocked.current = false;
+      const store = useWhiteboardStore.getState();
+      store.setCanUndo(hist.index > 0);
+      store.setCanRedo(hist.index < hist.stack.length - 1);
+    });
+  }, [undoSignal, fabricCanvas, currentPageId]);
+
+  // Redo: restore next history entry
+  useEffect(() => {
+    if (!fabricCanvas || redoSignal === 0) return;
+    const hist = getPageHistory(currentPageId);
+    if (hist.index >= hist.stack.length - 1) return;
+    hist.index++;
+    const json = hist.stack[hist.index];
+    isHistoryLocked.current = true;
+    void (fabricCanvas as any).loadFromJSON(json).then(() => {
+      fabricCanvas.requestRenderAll();
+      useWhiteboardStore.getState().updatePageData(currentPageId, json);
+      isHistoryLocked.current = false;
+      const store = useWhiteboardStore.getState();
+      store.setCanUndo(hist.index > 0);
+      store.setCanRedo(hist.index < hist.stack.length - 1);
+    });
+  }, [redoSignal, fabricCanvas, currentPageId]);
 
   useEffect(() => {
     if (activeTool !== 'rs' || rsSymbols.length > 0) return;
@@ -1289,10 +1434,6 @@ export default function Whiteboard() {
     }
   }, [newBackgroundUrl, fabricCanvas, consumeNewBackground]);
 
-  const currentPageId = useWhiteboardStore((state) => state.currentPageId);
-  const pages = useWhiteboardStore((state) => state.pages);
-  const updatePageData = useWhiteboardStore((state) => state.updatePageData);
-  const notebookLoadSignal = useWhiteboardStore((state) => state.notebookLoadSignal);
   const prevPageId = useRef(currentPageId);
   const prevNotebookLoadSignal = useRef(notebookLoadSignal);
 
@@ -1305,6 +1446,13 @@ export default function Whiteboard() {
 
     if (!pageChanged && !notebookLoaded) return;
 
+    // Reset full history when a new notebook is loaded
+    if (notebookLoaded) {
+      historyRef.current = {};
+      useWhiteboardStore.getState().setCanUndo(false);
+      useWhiteboardStore.getState().setCanRedo(false);
+    }
+
     // Save old page state only when switching pages within the same notebook
     if (pageChanged) {
       const oldJson: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
@@ -1313,6 +1461,7 @@ export default function Whiteboard() {
 
     const newPage = pages.find(p => p.id === currentPageId);
     if (newPage?.canvasData) {
+      isHistoryLocked.current = true;
       void fabricCanvas
         .loadFromJSON(newPage.canvasData)
         .then(() => {
@@ -1332,14 +1481,34 @@ export default function Whiteboard() {
             }
           });
           fabricCanvas.requestRenderAll();
+          isHistoryLocked.current = false;
+          // Baseline entry so the user can undo back to the loaded state
+          const hist = getPageHistory(currentPageId);
+          if (hist.index === -1) {
+            const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+            hist.stack = [json];
+            hist.index = 0;
+            useWhiteboardStore.getState().setCanUndo(false);
+            useWhiteboardStore.getState().setCanRedo(false);
+          }
         })
         .catch((error) => {
+          isHistoryLocked.current = false;
           console.error('Fehler beim Laden des Canvas-JSON:', error);
         });
     } else {
       fabricCanvas.clear();
       fabricCanvas.backgroundColor = '#ffffff';
       fabricCanvas.renderAll();
+      // Baseline: empty canvas
+      const hist = getPageHistory(currentPageId);
+      if (hist.index === -1) {
+        const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+        hist.stack = [json];
+        hist.index = 0;
+        useWhiteboardStore.getState().setCanUndo(false);
+        useWhiteboardStore.getState().setCanRedo(false);
+      }
     }
 
     prevPageId.current = currentPageId;
