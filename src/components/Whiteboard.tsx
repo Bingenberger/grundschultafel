@@ -626,6 +626,19 @@ export default function Whiteboard() {
     };
   }, [fabricCanvas, activeTool]);
 
+  // Set baseline history entry for the initial page when the canvas first becomes available.
+  // The page-switch effect never runs for the very first page because prevPageId already
+  // equals currentPageId at startup, so we initialise here instead.
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    const hist = getPageHistory(currentPageId);
+    if (hist.index === -1) {
+      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      hist.stack = [json];
+      hist.index = 0;
+    }
+  }, [fabricCanvas]); // intentionally omits currentPageId — only needs to run once on mount
+
   // Keep currentPageIdRef in sync so debounce callbacks always have the current page
   useEffect(() => {
     currentPageIdRef.current = currentPageId;
