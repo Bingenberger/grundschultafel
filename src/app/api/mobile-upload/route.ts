@@ -39,11 +39,13 @@ export async function POST(request: Request) {
 
     // Write token → URL mapping to disk so all workers can read it
     await ensurePendingDir();
-    await fs.writeFile(path.join(pendingDir, `${token}.pending`), publicUrl, 'utf-8');
+    const pendingPath = path.join(pendingDir, `${token}.pending`);
+    await fs.writeFile(pendingPath, publicUrl, 'utf-8');
+    console.log(`[mobile-upload] POST OK: wrote ${pendingPath}`);
 
     return NextResponse.json({ success: true, url: publicUrl });
   } catch (error) {
-    console.error('Error handling mobile upload:', error);
+    console.error('[mobile-upload] POST error:', error);
     return NextResponse.json({ error: 'Failed to process upload' }, { status: 500 });
   }
 }
@@ -62,13 +64,14 @@ export async function GET(request: Request) {
     try {
       const imageUrl = (await fs.readFile(pendingFile, 'utf-8')).trim();
       await fs.unlink(pendingFile); // consume once
+      console.log(`[mobile-upload] GET found image: ${imageUrl}`);
       return NextResponse.json({ imageUrl });
     } catch {
       // File doesn't exist yet — upload not received
       return NextResponse.json({ imageUrl: null });
     }
   } catch (error) {
-    console.error('Error polling mobile upload:', error);
+    console.error('[mobile-upload] GET error:', error);
     return NextResponse.json({ error: 'Failed to poll upload' }, { status: 500 });
   }
 }
