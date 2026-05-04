@@ -132,7 +132,8 @@ export default function AdminPage() {
   const cardStyle: React.CSSProperties = { background: 'var(--surface)', padding: '30px', borderRadius: '16px', border: '1px solid var(--border)', marginBottom: '24px' };
 
   return (
-    <div style={{ minHeight: '100dvh', background: 'var(--background)', color: 'var(--foreground)', padding: '40px' }}>
+    <div style={{ minHeight: '100dvh', background: 'var(--background)', color: 'var(--foreground)', padding: '40px', overflowY: 'auto' }}>
+      <style>{`body { overflow: auto !important; touch-action: auto !important; }`}</style>
       <div style={{ maxWidth: '640px', margin: '0 auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
           <h1 style={{ margin: 0 }}>Admin-Bereich</h1>
