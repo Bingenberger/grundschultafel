@@ -62,12 +62,25 @@ export async function GET(request: Request) {
     const pendingFile = path.join(pendingDir, `${token}.pending`);
 
     try {
-      const imageUrl = (await fs.readFile(pendingFile, 'utf-8')).trim();
+      const relativeUrl = (await fs.readFile(pendingFile, 'utf-8')).trim();
       await fs.unlink(pendingFile); // consume once
-      console.log(`[mobile-upload] GET found image: ${imageUrl}`);
-      return NextResponse.json({ imageUrl });
+
+      // Read the image file and return as data URL.
+      // Next.js does not reliably serve dynamically-written public/ files in production,
+      // so we serve the bytes here directly instead of returning a path.
+      const imagePath = path.join(process.cwd(), 'public', relativeUrl);
+      const imageBuffer = await fs.readFile(imagePath);
+      const ext = path.extname(relativeUrl).slice(1).toLowerCase();
+      const mime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg'
+        : ext === 'png' ? 'image/png'
+        : ext === 'webp' ? 'image/webp'
+        : 'image/jpeg';
+      const dataUrl = `data:${mime};base64,${imageBuffer.toString('base64')}`;
+
+      console.log(`[mobile-upload] GET: returning data URL for ${relativeUrl} (${imageBuffer.length} bytes)`);
+      return NextResponse.json({ imageUrl: dataUrl });
     } catch {
-      // File doesn't exist yet — upload not received
+      // Pending file doesn't exist yet — upload not received
       return NextResponse.json({ imageUrl: null });
     }
   } catch (error) {
