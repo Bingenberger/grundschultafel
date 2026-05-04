@@ -70,21 +70,30 @@ export default function Toolbar() {
         .then(res => res.json())
         .then(data => {
           if (data.imageUrl) {
+            console.log('[QR] Bild auf Server gefunden:', data.imageUrl);
             // Convert to data URL so Fabric.js can load it reliably (same as local upload)
             fetch(data.imageUrl)
-              .then(r => r.blob())
-              .then(blob => new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-              }))
+              .then(r => {
+                console.log('[QR] Fetch-Status:', r.status, r.headers.get('content-type'));
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.blob();
+              })
+              .then(blob => {
+                console.log('[QR] Blob erhalten, Größe:', blob.size, 'Typ:', blob.type);
+                return new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result as string);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(blob);
+                });
+              })
               .then(dataUrl => {
+                console.log('[QR] DataURL bereit, Länge:', dataUrl.length, 'Prefix:', dataUrl.substring(0, 30));
                 triggerAddImage(dataUrl);
                 setShowQrModal(false);
               })
               .catch(err => {
-                console.error('[QR-Upload] Bild konnte nicht geladen werden:', err);
+                console.error('[QR-Upload] Fehler beim Laden:', err);
                 setShowQrModal(false);
               });
           }

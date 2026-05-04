@@ -982,7 +982,9 @@ export default function Whiteboard() {
   // Handle Add Image
   useEffect(() => {
     if (fabricCanvas && newImage) {
+      console.log('[Whiteboard] Lade Bild in Canvas, URL-Prefix:', newImage.url.substring(0, 40));
       fabric.Image.fromURL(newImage.url).then((img) => {
+        console.log('[Whiteboard] Bild geladen, Größe:', img.width, 'x', img.height);
         // Center image and scale if too big
         const canvasWidth = fabricCanvas.width || 800;
         const canvasHeight = fabricCanvas.height || 600;
@@ -1058,6 +1060,9 @@ export default function Whiteboard() {
         if (!isRsImageInsertion) {
           useWhiteboardStore.getState().setActiveTool('move');
         }
+      }).catch((err) => {
+        console.error('[Whiteboard] fabric.Image.fromURL fehlgeschlagen:', err);
+        consumeNewImage();
       });
     }
   }, [newImage, fabricCanvas, consumeNewImage]);
