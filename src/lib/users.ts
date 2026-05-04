@@ -58,6 +58,22 @@ export async function getUser(username: string): Promise<User | undefined> {
   return users.find(u => u.username.toLowerCase() === username.toLowerCase());
 }
 
+export async function deleteUser(username: string): Promise<void> {
+  const users = await getUsers();
+  const filtered = users.filter(u => u.username.toLowerCase() !== username.toLowerCase());
+  if (filtered.length === users.length) throw new Error('Benutzer nicht gefunden');
+  await saveUsers(filtered);
+}
+
+export async function updateUserPassword(username: string, newPasswordPlain: string): Promise<void> {
+  const users = await getUsers();
+  const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+  if (!user) throw new Error('Benutzer nicht gefunden');
+  user.passwordHash = await bcrypt.hash(newPasswordPlain, 10);
+  user.mustChangePassword = false;
+  await saveUsers(users);
+}
+
 export async function createUser(username: string, passwordPlain: string, role: 'admin' | 'teacher' = 'teacher'): Promise<User> {
   const users = await getUsers();
   if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
