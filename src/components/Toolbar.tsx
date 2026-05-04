@@ -33,7 +33,6 @@ export default function Toolbar() {
   const [showEraserSettings, setShowEraserSettings] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [qrToken, setQrToken] = useState<string>('');
-  const [serverIp, setServerIp] = useState<string>('');
 
   const closeInsertRelatedMenus = () => {
     setShowInsertMenu(false);
@@ -59,12 +58,6 @@ export default function Toolbar() {
       })
       .catch(console.error);
 
-    fetch('/api/ip')
-      .then(res => res.json())
-      .then(data => {
-        if (data.ip) setServerIp(data.ip);
-      })
-      .catch(console.error);
   }, []);
 
   // Polling logic when QR Modal is open
@@ -758,7 +751,7 @@ export default function Toolbar() {
           <span style={{ fontSize: '0.65rem', marginTop: '2px', fontWeight: 'bold' }}>Handy</span>
         </button>
 
-        {showQrModal && serverIp && (
+        {showQrModal && (
           <div style={{
             position: 'absolute',
             bottom: '70px',
@@ -786,8 +779,8 @@ export default function Toolbar() {
               Scanne QR-Code mit dem Handy oder Tablet:
             </p>
             <div style={{ padding: '10px', background: 'white', borderRadius: '8px' }}>
-              <QRCodeCanvas 
-                value={`http://${serverIp}:3000/upload?token=${qrToken}`} 
+              <QRCodeCanvas
+                value={`${typeof window !== 'undefined' ? window.location.origin : ''}/upload?token=${qrToken}`}
                 size={200}
                 level={"M"}
                 includeMargin={true}
