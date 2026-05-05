@@ -1130,6 +1130,8 @@ export default function Whiteboard() {
           fabricCanvas.setActiveObject(img);
         }
         fabricCanvas.renderAll();
+        const { updatePageData: upd, currentPageId: pid } = useWhiteboardStore.getState();
+        upd(pid, (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS));
         consumeNewImage();
 
         if (!isRsImageInsertion) {
@@ -1864,18 +1866,23 @@ export default function Whiteboard() {
       finishCurrentStroke();
     };
 
-    const saveState = () => {
+    const saveStateForPath = () => {
       if ((activeTool === 'pen' || activeTool === 'rs') && !isSnapping && !isDrawingStraight && !isDrawingRs) {
         const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
         updatePageData(currentPageId, json);
       }
     };
 
+    const saveStateForModified = () => {
+      const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+      updatePageData(currentPageId, json);
+    };
+
     fabricCanvas.on('mouse:down', onMouseDown);
     fabricCanvas.on('mouse:move', onMouseMove);
     fabricCanvas.on('mouse:up', onMouseUp);
-    fabricCanvas.on('path:created', saveState);
-    fabricCanvas.on('object:modified', saveState);
+    fabricCanvas.on('path:created', saveStateForPath);
+    fabricCanvas.on('object:modified', saveStateForModified);
     window.addEventListener('pointerup', onPointerReleasedOutsideCanvas);
     window.addEventListener('pointercancel', onPointerReleasedOutsideCanvas);
     window.addEventListener('mouseup', onPointerReleasedOutsideCanvas);
@@ -1885,8 +1892,8 @@ export default function Whiteboard() {
       fabricCanvas.off('mouse:down', onMouseDown);
       fabricCanvas.off('mouse:move', onMouseMove);
       fabricCanvas.off('mouse:up', onMouseUp);
-      fabricCanvas.off('path:created', saveState);
-      fabricCanvas.off('object:modified', saveState);
+      fabricCanvas.off('path:created', saveStateForPath);
+      fabricCanvas.off('object:modified', saveStateForModified);
       window.removeEventListener('pointerup', onPointerReleasedOutsideCanvas);
       window.removeEventListener('pointercancel', onPointerReleasedOutsideCanvas);
       window.removeEventListener('mouseup', onPointerReleasedOutsideCanvas);
