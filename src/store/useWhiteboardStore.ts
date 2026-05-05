@@ -34,6 +34,8 @@ interface WhiteboardState {
   setHighlighterWidth: (width: number) => void;
   eraserWidth: number;
   setEraserWidth: (width: number) => void;
+  fillColor: string;
+  setFillColor: (color: string) => void;
   clearCanvasSignal: number;
   triggerClearCanvas: () => void;
   newImage: PendingImage | null;
@@ -118,6 +120,8 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
   setHighlighterWidth: (width) => set({ highlighterWidth: width }),
   eraserWidth: 20,
   setEraserWidth: (width) => set({ eraserWidth: width }),
+  fillColor: '#000000',
+  setFillColor: (color) => set({ fillColor: color }),
   clearCanvasSignal: 0,
   triggerClearCanvas: () => set((state) => ({ clearCanvasSignal: state.clearCanvasSignal + 1 })),
   newImage: null,

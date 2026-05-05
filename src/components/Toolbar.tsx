@@ -1,4 +1,5 @@
 import { useWhiteboardStore, ToolType } from '@/store/useWhiteboardStore';
+import { HexColorPicker } from 'react-colorful';
 import { MousePointer2, Pen, Eraser, Trash2, Image as ImageIcon, ImagePlus, QrCode, X, Youtube, Camera, Type, Briefcase, Shapes, Minus, PlusSquare, PaintBucket, Highlighter, Undo2, Redo2 } from 'lucide-react';
 import { useRef, useState, useEffect } from 'react';
 import GalleryModal from './GalleryModal';
@@ -15,12 +16,14 @@ export default function Toolbar() {
     isStraightLineMode, setStraightLineMode,
     highlighterColor, setHighlighterColor, highlighterWidth, setHighlighterWidth,
     eraserWidth, setEraserWidth,
+    fillColor, setFillColor,
     canUndo, triggerUndo, canRedo, triggerRedo,
   } = useWhiteboardStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const penSettingsRef = useRef<HTMLDivElement>(null);
   const highlighterSettingsRef = useRef<HTMLDivElement>(null);
   const eraserSettingsRef = useRef<HTMLDivElement>(null);
+  const fillSettingsRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [backgrounds, setBackgrounds] = useState<string[]>([]);
   const [showBgSelector, setShowBgSelector] = useState(false);
@@ -32,6 +35,7 @@ export default function Toolbar() {
   const [showPenSettings, setShowPenSettings] = useState(false);
   const [showHighlighterSettings, setShowHighlighterSettings] = useState(false);
   const [showEraserSettings, setShowEraserSettings] = useState(false);
+  const [showFillSettings, setShowFillSettings] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [qrToken, setQrToken] = useState<string>('');
 
@@ -49,6 +53,7 @@ export default function Toolbar() {
     setShowPenSettings(false);
     setShowHighlighterSettings(false);
     setShowEraserSettings(false);
+    setShowFillSettings(false);
   };
 
   useEffect(() => {
@@ -139,6 +144,12 @@ export default function Toolbar() {
       } else {
         setActiveTool('eraser');
       }
+    } else if (tool === 'fill') {
+      if (activeTool === 'fill') {
+        setShowFillSettings(!showFillSettings);
+      } else {
+        setActiveTool('fill');
+      }
     } else {
       setActiveTool(tool);
     }
@@ -157,6 +168,10 @@ export default function Toolbar() {
   }, [activeTool]);
 
   useEffect(() => {
+    if (activeTool !== 'fill') setShowFillSettings(false);
+  }, [activeTool]);
+
+  useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (!target) return;
@@ -164,6 +179,7 @@ export default function Toolbar() {
       if (penSettingsRef.current?.contains(target)) return;
       if (highlighterSettingsRef.current?.contains(target)) return;
       if (eraserSettingsRef.current?.contains(target)) return;
+      if (fillSettingsRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest('[data-gallery-modal="true"]')) return;
       if (target instanceof Element && target.closest('[data-youtube-modal="true"]')) return;
       closeToolbarMenus();
@@ -296,35 +312,14 @@ export default function Toolbar() {
 	                />
 	              ))}
 
-                <label style={{
-                  position: 'relative',
-                  width: '32px', height: '32px', borderRadius: '50%',
-                  cursor: 'pointer', border: '1px solid var(--border)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)',
-                  overflow: 'hidden', padding: 0
-                }}
-                title="Eigene Farbe">
-                  <input
-                    type="color"
-                    value={penColor}
-                    onChange={(e) => setPenColor(e.target.value)}
-                    style={{
-                      position: 'absolute',
-                      inset: 0,
-                      opacity: 0,
-                      width: '100%',
-                      height: '100%',
-                      cursor: 'pointer',
-                      border: 'none',
-                      padding: 0
-                    }}
-                  />
-                </label>
-	            </div>
-	          </div>
 
-	          <div style={{ width: '100%', height: '1px', background: 'var(--border)' }}></div>
+            </div>
+            <div style={{ marginTop: '10px' }}>
+              <HexColorPicker color={penColor} onChange={setPenColor} style={{ width: '200px', height: '150px' }} />
+            </div>
+          </div>
+
+          <div style={{ width: '100%', height: '1px', background: 'var(--border)' }}></div>
           
           {/* Straight Line Toggle */}
           <button
@@ -395,21 +390,9 @@ export default function Toolbar() {
                   title={color}
                 />
               ))}
-              <label style={{
-                position: 'relative',
-                width: '32px', height: '32px', borderRadius: '50%',
-                cursor: 'pointer', border: '1px solid var(--border)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)',
-                overflow: 'hidden', padding: 0,
-              }} title="Eigene Farbe">
-                <input
-                  type="color"
-                  value={highlighterColor}
-                  onChange={(e) => setHighlighterColor(e.target.value)}
-                  style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', border: 'none', padding: 0 }}
-                />
-              </label>
+            </div>
+            <div style={{ marginTop: '10px' }}>
+              <HexColorPicker color={highlighterColor} onChange={setHighlighterColor} style={{ width: '200px', height: '150px' }} />
             </div>
           </div>
         </div>
@@ -444,6 +427,50 @@ export default function Toolbar() {
               onChange={(e) => setEraserWidth(Number(e.target.value))}
               style={{ width: '200px', accentColor: 'var(--primary)', cursor: 'pointer' }}
             />
+          </div>
+        </div>
+      )}
+
+      {showFillSettings && activeTool === 'fill' && (
+        <div ref={fillSettingsRef} style={{
+          position: 'absolute',
+          bottom: 'calc(env(safe-area-inset-bottom, 20px) + 70px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'var(--surface)',
+          padding: '16px',
+          borderRadius: '16px',
+          boxShadow: '0 8px 25px rgba(0,0,0,0.2)',
+          border: '1px solid var(--border)',
+          zIndex: 99,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          width: 'max-content',
+        }}>
+          <div>
+            <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '8px', color: 'var(--foreground)' }}>Füllfarbe</div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', maxWidth: '200px' }}>
+              {PRESET_COLORS.map(color => (
+                <button
+                  key={color}
+                  onClick={() => setFillColor(color)}
+                  style={{
+                    width: '32px', height: '32px', borderRadius: '50%',
+                    backgroundColor: color, cursor: 'pointer',
+                    border: fillColor === color ? '3px solid var(--primary)' : '1px solid var(--border)',
+                    boxShadow: fillColor === color ? '0 0 0 2px var(--background)' : 'none',
+                    padding: 0, transition: 'transform 0.1s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                  title={color}
+                />
+              ))}
+            </div>
+            <div style={{ marginTop: '10px' }}>
+              <HexColorPicker color={fillColor} onChange={setFillColor} style={{ width: '200px', height: '150px' }} />
+            </div>
           </div>
         </div>
       )}

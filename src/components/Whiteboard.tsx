@@ -774,41 +774,116 @@ export default function Whiteboard() {
     if (!fabricCanvas) return;
 
     const handleMouseDown = (options: any) => {
-      const { activeTool, penColor, setActiveTool } = useWhiteboardStore.getState();
-      
+      const { activeTool, fillColor, setActiveTool } = useWhiteboardStore.getState();
+
       if (activeTool === 'fill') {
         const target = options.target as fabric.Object | undefined;
-        if (!target) return;
-        if ((target as any).isRuler || (target as any).timerType || (target as any).youtubeId || (target as any).isLockedStroke) return;
+        if (target && ((target as any).isRuler || (target as any).timerType || (target as any).youtubeId || (target as any).isLockedStroke)) return;
 
-        let didFill = false;
-        const fillColor = penColor;
+        const pointer = options.scenePoint || options.pointer || { x: 0, y: 0 };
 
-        if (target.type === 'rect' || target.type === 'circle' || target.type === 'triangle') {
-          target.set({ fill: fillColor });
-          didFill = true;
-        } else if (target.type === 'path') {
-          const pathTarget = target as fabric.Path & { path: any[] };
-          const pathCommands = Array.isArray(pathTarget.path) ? [...pathTarget.path] : [];
-          const lastCommand = pathCommands[pathCommands.length - 1];
-          if (!lastCommand || String(lastCommand[0]).toUpperCase() !== 'Z') {
-            pathTarget.path = [...pathCommands, ['Z']] as any;
-          }
-          pathTarget.set({ fill: fillColor });
-          pathTarget.setCoords();
-          didFill = true;
+        // Draw the physical canvas into a CSS-sized temporary canvas to eliminate DPR issues.
+        // BFS then runs entirely in scene/CSS coordinate space.
+        const physicalEl = (fabricCanvas as any).lowerCanvasEl as HTMLCanvasElement | null;
+        if (!physicalEl) return;
+        const cw = fabricCanvas.width as number;
+        const ch = fabricCanvas.height as number;
+        if (!cw || !ch) return;
+
+        const tempEl = document.createElement('canvas');
+        tempEl.width = cw;
+        tempEl.height = ch;
+        const tempCtx = tempEl.getContext('2d', { willReadFrequently: true })!;
+        tempCtx.drawImage(physicalEl, 0, 0, cw, ch);
+        const pixels = tempCtx.getImageData(0, 0, cw, ch).data;
+
+        const vpt = (fabricCanvas.viewportTransform as number[]) || [1, 0, 0, 1, 0, 0];
+        const zoom = vpt[0];
+        // Scene → CSS pixel (for BFS canvas which is in CSS pixel space)
+        const px = Math.floor(pointer.x * zoom + vpt[4]);
+        const py = Math.floor(pointer.y * zoom + vpt[5]);
+        if (px <= 0 || px >= cw - 1 || py <= 0 || py >= ch - 1) return;
+
+        const si = (py * cw + px) * 4;
+        const tr = pixels[si], tg = pixels[si + 1], tb = pixels[si + 2], ta = pixels[si + 3];
+
+        const hex = fillColor.replace('#', '');
+        const fr = parseInt(hex.slice(0, 2), 16);
+        const fg = parseInt(hex.slice(2, 4), 16);
+        const fb = parseInt(hex.slice(4, 6), 16);
+        if (tr === fr && tg === fg && tb === fb && ta === 255) return;
+
+        // Alpha must also match — distinguishes transparent bg (a=0) from opaque black strokes (a=255)
+        const RGB_TOL = 30, A_TOL = 30;
+        const matches = (i: number) =>
+          Math.abs(pixels[i + 3] - ta) <= A_TOL &&
+          Math.abs(pixels[i] - tr) + Math.abs(pixels[i + 1] - tg) + Math.abs(pixels[i + 2] - tb) <= RGB_TOL;
+
+        const totalPixels = cw * ch;
+        const visited = new Uint8Array(totalPixels);
+        const stack: number[] = [py * cw + px];
+        visited[py * cw + px] = 1;
+        let count = 0;
+        let minX = px, maxX = px, minY = py, maxY = py;
+        let escaped = false;
+
+        while (stack.length > 0 && !escaped && count < totalPixels >> 1) {
+          count++;
+          const pos = stack.pop()!;
+          const x = pos % cw;
+          const y = Math.floor(pos / cw);
+          if (x < minX) minX = x; else if (x > maxX) maxX = x;
+          if (y < minY) minY = y; else if (y > maxY) maxY = y;
+
+          if (x === 0 || x === cw - 1 || y === 0 || y === ch - 1) { escaped = true; break; }
+          const l = pos - 1, r = pos + 1, u = pos - cw, d = pos + cw;
+          if (!visited[l] && matches(l * 4)) { visited[l] = 1; stack.push(l); }
+          if (!visited[r] && matches(r * 4)) { visited[r] = 1; stack.push(r); }
+          if (!visited[u] && matches(u * 4)) { visited[u] = 1; stack.push(u); }
+          if (!visited[d] && matches(d * 4)) { visited[d] = 1; stack.push(d); }
         }
 
-        if (didFill) {
-          target.set({
+        if (escaped || count >= totalPixels >> 1) return;
+
+        // Build cropped fill image in CSS pixel space
+        const fw = maxX - minX + 1;
+        const fh = maxY - minY + 1;
+        const fillEl = document.createElement('canvas');
+        fillEl.width = fw;
+        fillEl.height = fh;
+        const fillCtx = fillEl.getContext('2d')!;
+        const fillImg = fillCtx.createImageData(fw, fh);
+        const fd = fillImg.data;
+        for (let fy = minY; fy <= maxY; fy++) {
+          for (let fx = minX; fx <= maxX; fx++) {
+            if (visited[fy * cw + fx]) {
+              const i = ((fy - minY) * fw + (fx - minX)) * 4;
+              fd[i] = fr; fd[i + 1] = fg; fd[i + 2] = fb; fd[i + 3] = 255;
+            }
+          }
+        }
+        fillCtx.putImageData(fillImg, 0, 0);
+
+        // Place image: minX/minY are in CSS pixels = scene units (for zoom=1, pan=0)
+        fabric.Image.fromURL(fillEl.toDataURL('image/png')).then(img => {
+          img.set({
+            left: (minX - vpt[4]) / zoom,
+            top:  (minY - vpt[5]) / zoom,
+            scaleX: 1 / zoom,
+            scaleY: 1 / zoom,
+            originX: 'left',
+            originY: 'top',
             selectable: false,
-            evented: true,
+            evented: false,
           });
-          fabricCanvas.discardActiveObject();
+          (img as any).id = uuidv4();
+          (img as any).isFill = true;
+          fabricCanvas.add(img);
+          fabricCanvas.sendObjectToBack(img);
           fabricCanvas.requestRenderAll();
           const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
-        }
+          updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke', 'isFill']));
+        });
       } else if (activeTool === 'text') {
         const pointer = options.scenePoint || options.pointer || { x: 100, y: 100 };
         const onDeleteText = (target: fabric.Object, canvas: fabric.Canvas) => {
