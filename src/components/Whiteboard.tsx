@@ -1056,13 +1056,34 @@ export default function Whiteboard() {
 
   // Handle Add Image
   useEffect(() => {
-    if (fabricCanvas && newImage) {
-      console.log('[Whiteboard] Lade Bild in Canvas, URL-Prefix:', newImage.url.substring(0, 40));
-      fabric.Image.fromURL(newImage.url).then((img) => {
-        console.log('[Whiteboard] Bild geladen, Größe:', img.width, 'x', img.height);
+    if (!fabricCanvas || !newImage) return;
+    const canvas = fabricCanvas;
+    const pendingImage = newImage;
+
+    async function insertImage() {
+      let imageUrl = pendingImage.url;
+
+      // Convert external URLs to data URLs so saved notebooks are self-contained
+      // and don't depend on the original URL being reachable later.
+      if (!imageUrl.startsWith('data:')) {
+        try {
+          const res = await fetch(imageUrl);
+          const blob = await res.blob();
+          imageUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn('[Whiteboard] Data-URL-Konvertierung fehlgeschlagen, benutze Original-URL:', e);
+        }
+      }
+
+      fabric.Image.fromURL(imageUrl).then((img) => {
         // Center image and scale if too big
-        const canvasWidth = fabricCanvas.width || 800;
-        const canvasHeight = fabricCanvas.height || 600;
+        const canvasWidth = canvas.width || 800;
+        const canvasHeight = canvas.height || 600;
         
         let scale = 1;
         if (img.width! > canvasWidth * 0.8 || img.height! > canvasHeight * 0.8) {
@@ -1104,9 +1125,9 @@ export default function Whiteboard() {
           }
         });
 
-        const targetLeft = newImage.left ?? canvasWidth / 2;
-        const targetTop = newImage.top ?? canvasHeight / 2;
-        const isRsImageInsertion = useWhiteboardStore.getState().activeTool === 'rs' && newImage.left !== undefined && newImage.top !== undefined;
+        const targetLeft = pendingImage.left ?? canvasWidth / 2;
+        const targetTop = pendingImage.top ?? canvasHeight / 2;
+        const isRsImageInsertion = useWhiteboardStore.getState().activeTool === 'rs' && pendingImage.left !== undefined && pendingImage.top !== undefined;
         const rsTargetSize = 36;
 
         if (isRsImageInsertion) {
@@ -1125,14 +1146,13 @@ export default function Whiteboard() {
           padding: 10
         });
 
-        fabricCanvas.add(img);
+        canvas.add(img);
         if (!isRsImageInsertion) {
-          fabricCanvas.setActiveObject(img);
+          canvas.setActiveObject(img);
         }
-        fabricCanvas.renderAll();
+        canvas.renderAll();
         const { updatePageData: upd, currentPageId: pid } = useWhiteboardStore.getState();
-        const canvasJson = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
-        console.log('[Image] Bild eingefügt, Objekte im Canvas:', canvasJson?.objects?.length, 'Typen:', canvasJson?.objects?.map((o: any) => o.type));
+        const canvasJson = (canvas as any).toJSON(CANVAS_JSON_KEYS);
         upd(pid, canvasJson);
         consumeNewImage();
 
@@ -1144,6 +1164,8 @@ export default function Whiteboard() {
         consumeNewImage();
       });
     }
+
+    insertImage();
   }, [newImage, fabricCanvas, consumeNewImage]);
 
   const newBackgroundUrl = useWhiteboardStore((state) => state.newBackgroundUrl);
