@@ -1131,7 +1131,9 @@ export default function Whiteboard() {
         }
         fabricCanvas.renderAll();
         const { updatePageData: upd, currentPageId: pid } = useWhiteboardStore.getState();
-        upd(pid, (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS));
+        const canvasJson = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+        console.log('[Image] Bild eingefügt, Objekte im Canvas:', canvasJson?.objects?.length, 'Typen:', canvasJson?.objects?.map((o: any) => o.type));
+        upd(pid, canvasJson);
         consumeNewImage();
 
         if (!isRsImageInsertion) {

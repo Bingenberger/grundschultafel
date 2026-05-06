@@ -63,12 +63,14 @@ export default function Sidebar() {
     }
 
     try {
-      await fetch(`/api/notebooks/${id}`, {
+      const payload = { name, pages, journalImages };
+      console.log('[Save] Speichere Heft, Seiten:', pages.length, '– Objekte pro Seite:', pages.map(p => (p.canvasData as any)?.objects?.length ?? 'kein canvasData'));
+      const res = await fetch(`/api/notebooks/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, pages, journalImages })
+        body: JSON.stringify(payload)
       });
-      // Optionally show a temporary success indicator instead of alert
+      console.log('[Save] Server-Antwort:', res.status, res.ok ? 'OK' : 'FEHLER');
     } catch (e) {
       console.error('Fehler beim Speichern!', e);
     } finally {
@@ -81,6 +83,7 @@ export default function Sidebar() {
       const res = await fetch(`/api/notebooks/${id}`);
       const data = await res.json();
       if (data.pages) {
+        console.log('[Load] Geladene Seiten:', data.pages.length, '– Objekte pro Seite:', data.pages.map((p: any) => p.canvasData?.objects?.length ?? 'kein canvasData'));
         loadNotebookState(id, name, data.pages, data.journalImages || []);
         setIsModalOpen(false);
       }
