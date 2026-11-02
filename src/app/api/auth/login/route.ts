@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getUser } from '@/lib/users';
+import { getUser, consumeBootstrap } from '@/lib/users';
 import { createSession } from '@/lib/session';
 import bcrypt from 'bcryptjs';
 
@@ -72,14 +72,14 @@ export async function POST(request: NextRequest) {
 
     const user = await getUser(username);
 
-    if (!user) {
+    if (!user || (user.bootstrapExpiresAt !== undefined && user.bootstrapExpiresAt <= Date.now())) {
       recordFailedAttempt(ip);
       return NextResponse.json({ error: 'Ungültige Anmeldedaten' }, { status: 401 });
     }
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
 
-    if (!passwordMatches) {
+    if (!passwordMatches || !await consumeBootstrap(user)) {
       recordFailedAttempt(ip);
       return NextResponse.json({ error: 'Ungültige Anmeldedaten' }, { status: 401 });
     }

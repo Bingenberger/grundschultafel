@@ -114,6 +114,14 @@ export default function ChangePasswordPage() {
         )}
 
         {/* PIN display */}
+        {stage === 'current' && <details>
+          <summary>Erstzugang mit Einmalcode</summary>
+          <form onSubmit={e => { e.preventDefault(); setStage('new'); }}>
+            <label>Einmalcode <input type="password" value={pins.current}
+              onChange={e => setPins(prev => ({ ...prev, current: e.target.value }))} autoComplete="one-time-code" /></label>
+            <button disabled={!pins.current}>Neue PIN festlegen</button>
+          </form>
+        </details>}
         <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '20px' }}>
           {[...Array(6)].map((_, i) => (
             <div key={i} style={{

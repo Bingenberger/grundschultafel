@@ -163,6 +163,13 @@ export default function LoginPage() {
             <p style={{ textAlign: 'center', marginBottom: '12px', color: 'var(--foreground)', opacity: 0.7, fontSize: '0.9rem' }}>
               PIN eingeben
             </p>
+            <details>
+              <summary>Erstzugang mit Einmalcode</summary>
+              <form onSubmit={e => { e.preventDefault(); handleLogin(pin); }}>
+                <label>Einmalcode <input type="password" value={pin} onChange={e => setPin(e.target.value)} autoComplete="one-time-code" /></label>
+                <button disabled={loading}>Anmelden</button>
+              </form>
+            </details>
 
             {/* PIN dots */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '20px' }}>

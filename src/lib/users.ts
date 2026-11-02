@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
@@ -12,28 +13,14 @@ export interface User {
   role: 'admin' | 'teacher';
   createdAt: string;
   mustChangePassword?: boolean;
+  bootstrapExpiresAt?: number;
 }
 
-// Ensure the data directory and users.json exist, and seed the default admin if empty
+// Initial administrators are provisioned exclusively through the local CLI.
 export async function initUsersFile() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 
-  try {
-    await fs.access(USERS_FILE);
-  } catch {
-    // If it doesn't exist, create it with a default admin
-    const defaultAdminPassword = await bcrypt.hash('123456', 10);
-    const initialAdmin: User = {
-      id: 'admin',
-      username: 'admin',
-      passwordHash: defaultAdminPassword,
-      role: 'admin',
-      createdAt: new Date().toISOString(),
-      mustChangePassword: true,
-    };
-    await fs.writeFile(USERS_FILE, JSON.stringify([initialAdmin], null, 2), 'utf-8');
-    console.log('Created default admin (admin / 123456). Please change the password later!');
-  }
+  // Do not create an account in response to an unauthenticated HTTP request.
 }
 
 export async function getUsers(): Promise<User[]> {
@@ -42,20 +29,42 @@ export async function getUsers(): Promise<User[]> {
     const data = await fs.readFile(USERS_FILE, 'utf-8');
     return JSON.parse(data) as User[];
   } catch (error) {
-    console.error('Error reading users.json', error);
-    return [];
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 }
 
 export async function saveUsers(users: User[]): Promise<void> {
   await initUsersFile();
-  await fs.writeFile(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+  const temporary = `${USERS_FILE}.${randomUUID()}.tmp`;
+  const handle = await fs.open(temporary, 'wx', 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(users, null, 2), 'utf-8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(temporary, USERS_FILE);
 }
 
 export async function getUser(username: string): Promise<User | undefined> {
   const users = await getUsers();
   // case insensitive username check
   return users.find(u => u.username.toLowerCase() === username.toLowerCase());
+}
+
+export async function consumeBootstrap(user: User): Promise<boolean> {
+  if (user.bootstrapExpiresAt === undefined) return true;
+  if (user.bootstrapExpiresAt <= Date.now()) return false;
+  if (!/^[a-zA-Z0-9-]+$/.test(user.id)) return false;
+  try {
+    const handle = await fs.open(path.join(DATA_DIR, `bootstrap-consumed-${user.id}`), 'wx', 0o600);
+    await handle.close();
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
 }
 
 export async function deleteUser(username: string): Promise<void> {
@@ -71,6 +80,7 @@ export async function updateUserPassword(username: string, newPasswordPlain: str
   if (!user) throw new Error('Benutzer nicht gefunden');
   user.passwordHash = await bcrypt.hash(newPasswordPlain, 10);
   user.mustChangePassword = false;
+  delete user.bootstrapExpiresAt;
   await saveUsers(users);
 }
 

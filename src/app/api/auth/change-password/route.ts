@@ -26,6 +26,9 @@ export async function POST(request: NextRequest) {
   }
 
   const user = users[userIndex];
+  if (user.bootstrapExpiresAt !== undefined && user.bootstrapExpiresAt <= Date.now()) {
+    return NextResponse.json({ error: 'Erstzugang abgelaufen' }, { status: 401 });
+  }
   const currentMatches = await bcrypt.compare(currentPassword, user.passwordHash);
   if (!currentMatches) {
     return NextResponse.json({ error: 'Aktuelle PIN ist falsch' }, { status: 401 });
@@ -35,6 +38,7 @@ export async function POST(request: NextRequest) {
     ...user,
     passwordHash: await bcrypt.hash(newPassword, 10),
     mustChangePassword: false,
+    bootstrapExpiresAt: undefined,
   };
   await saveUsers(users);
 
