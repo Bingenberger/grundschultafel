@@ -1,3 +1,6 @@
+import {GALLERY_ORIGIN} from '@/lib/gallery';
+import {boundedBody} from '@/lib/platform';
+export const dynamic='force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
@@ -9,8 +12,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid gallery asset request' }, { status: 400 });
     }
 
+    if(!GALLERY_ORIGIN)return NextResponse.json({error:'Galerie derzeit nicht verfügbar'},{status:503});
     const remoteUrl = new URL(src);
-    if (remoteUrl.origin !== 'https://pix.foerster.rocks') {
+    if (remoteUrl.origin !== new URL(GALLERY_ORIGIN).origin || remoteUrl.username || remoteUrl.password || !/^\/static\/(display|thumbnails)\//.test(remoteUrl.pathname)) {
       return NextResponse.json({ error: 'Invalid gallery asset source' }, { status: 400 });
     }
 
@@ -18,23 +22,24 @@ export async function GET(request: NextRequest) {
       headers: {
         'User-Agent': 'TafelPopafel/1.0'
       },
-      cache: 'force-cache',
+      cache: 'no-store',redirect:'error',signal:AbortSignal.timeout(5000),
     });
 
     if (!remoteRes.ok) {
       return NextResponse.json({ error: 'Gallery asset not found' }, { status: 404 });
     }
 
-    const buffer = await remoteRes.arrayBuffer();
+    if(!['image/png','image/jpeg','image/webp','image/gif'].includes((remoteRes.headers.get('content-type')||'').split(';')[0]))return NextResponse.json({error:'Bildformat nicht verfügbar'},{status:415});
+    const buffer = await boundedBody(remoteRes as any,16*1024*1024);
 
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         'Content-Type': remoteRes.headers.get('content-type') || 'image/webp',
-        'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options':'nosniff',
       },
     });
   } catch (error) {
-    console.error('Error serving gallery asset:', error);
+    console.error('Gallery asset unavailable');
     return NextResponse.json({ error: 'Gallery asset not found' }, { status: 404 });
   }
 }

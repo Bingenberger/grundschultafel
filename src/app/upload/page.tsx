@@ -78,7 +78,7 @@ export default function MobileUploadPage() {
           <>
             <input 
               type="file" 
-              accept="image/*" 
+              accept="image/png,image/jpeg,image/webp"
               capture="environment" // Suggests back camera on mobile
               ref={fileInputRef} 
               style={{ display: 'none' }} 

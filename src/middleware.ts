@@ -1,57 +1,39 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { getSession } from './lib/session';
+import { sessionFor } from './lib/session';
+import { ready,publicOrigin } from './lib/platform';
 
-// Define public routes
-const publicRoutes = ['/login', '/api/auth/login', '/api/auth/users', '/upload', '/api/mobile-upload'];
-const adminRoutes = ['/admin', '/api/admin'];
-
-export async function middleware(req: NextRequest) {
-  const path = req.nextUrl.pathname;
-  const isPublicRoute = publicRoutes.some(r => path.startsWith(r));
-  const isAdminRoute = adminRoutes.some(r => path.startsWith(r));
-
-  // Bypass next internal files and assets
-  if (path.startsWith('/_next') || path.startsWith('/favicon.ico')) {
-    return NextResponse.next();
+const publicRoute=(path:string)=>['/login','/api/auth/login','/api/auth/users','/upload','/api/mobile-upload'].includes(path);
+async function access(req:NextRequest) {
+  const path=req.nextUrl.pathname;
+  if(path==='/health/live'||path==='/health/ready') return NextResponse.next();
+  if(!ready()) return NextResponse.json({error:'Einrichtung noch nicht abgeschlossen'},{status:503});
+  if(!['GET','HEAD','OPTIONS'].includes(req.method)) {
+    const origin=req.headers.get('origin');
+    if(origin&&origin!==publicOrigin()) return NextResponse.json({error:'Unzulässiger Ursprung'},{status:403});
   }
-
-  const session = await getSession();
-
-  // Redirect to login if unauthenticated and not on a public route
-  if (!session && !isPublicRoute) {
-    // Return 401 for API routes instead of redirect
-    if (path.startsWith('/api/')) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    return NextResponse.redirect(new URL('/login', req.nextUrl));
+  if(path.startsWith('/_next/')||path==='/favicon.ico') return NextResponse.next();
+  const session=await sessionFor(req.cookies.get('session')?.value,req.cookies.get('tafel_device')?.value);
+  if(!session&&!publicRoute(path)) {
+    if(path.startsWith('/api/')||path.startsWith('/assets/')) return NextResponse.json({error:'Unauthorized'},{status:401});
+    return NextResponse.redirect(new URL('/login',publicOrigin()));
   }
-
-  // Redirect to dashboard if logged in but trying to access login
-  if (session && path === '/login') {
-    return NextResponse.redirect(new URL('/', req.nextUrl));
+  if(session&&path==='/login') return NextResponse.redirect(new URL('/',publicOrigin()));
+  const change=['/change-password','/api/auth/change-password','/api/auth/logout'];
+  if(session?.mustChangePassword&&!change.includes(path)) {
+    if(path.startsWith('/api/')) return NextResponse.json({error:'PIN-Wechsel erforderlich'},{status:403});
+    return NextResponse.redirect(new URL('/change-password',publicOrigin()));
   }
-
-  // Force password change for users who must set a new password
-  const changePasswordPaths = ['/change-password', '/api/auth/change-password', '/api/auth/logout'];
-  if (session?.mustChangePassword && !changePasswordPaths.some(p => path.startsWith(p))) {
-    if (path.startsWith('/api/')) {
-      return NextResponse.json({ error: 'Passwortänderung erforderlich' }, { status: 403 });
-    }
-    return NextResponse.redirect(new URL('/change-password', req.nextUrl));
+  if(session&&(path==='/admin'||path.startsWith('/api/admin/'))&&session.role!=='admin') {
+    return NextResponse.json({error:'Forbidden'},{status:403});
   }
-
-  // Restrict admin routes to actual admins
-  if (session && isAdminRoute && session.role !== 'admin') {
-    if (path.startsWith('/api/')) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    return NextResponse.redirect(new URL('/', req.nextUrl));
-  }
-
   return NextResponse.next();
 }
-
-export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
-};
+export async function middleware(req:NextRequest){
+  const response=await access(req);
+  response.headers.set('Cache-Control','private, no-store');
+  response.headers.set('Referrer-Policy','no-referrer');
+  response.headers.set('X-Content-Type-Options','nosniff');
+  return response;
+}
+export const config={runtime:'nodejs',matcher:['/((?!_next/static|_next/image|favicon.ico).*)']};

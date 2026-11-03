@@ -1,55 +1,23 @@
-import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { getSession } from '@/lib/session';
-
-export async function GET() {
+export const dynamic='force-dynamic';
+import {NextResponse} from 'next/server';
+import {getSession} from '@/lib/session';
+import * as store from '@/lib/file-store.cjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+export async function GET(){
+  const session=await getSession();
+  if(!session)return NextResponse.json({error:'Unauthorized'},{status:401});
+  const directory=path.join(store.dataDir(),session.id);
   try {
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const USER_DATA_DIR = path.join(process.cwd(), 'data', session.id);
-    await fs.mkdir(USER_DATA_DIR, { recursive: true });
-    
-    const files = await fs.readdir(USER_DATA_DIR);
-    
-    // We need to read the content to get the actual name stored inside the JSON
-    const notebooksPromises = files
-      .filter(f => f.endsWith('.json'))
-      .map(async (file) => {
-        const filePath = path.join(USER_DATA_DIR, file);
-        const stats = await fs.stat(filePath);
-        const id = file.replace('.json', '');
-        let name = id.replace(/_/g, ' ');
-
-        try {
-          const content = await fs.readFile(filePath, 'utf-8');
-          const data = JSON.parse(content);
-          if (data.name) {
-            name = data.name;
-          }
-        } catch (e) {
-          // fallback to filename if reading fails
-        }
-
-        return {
-          id,
-          name,
-          updatedAt: stats.mtime.toISOString()
-        };
-      });
-
-    // Resolve all promises
-    const resolvedNotebooks = await Promise.all(notebooksPromises);
-
-    // Sort by most recent
-    resolvedNotebooks.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-    return NextResponse.json({ notebooks: resolvedNotebooks });
-  } catch (error) {
-    console.error('Error fetching notebooks:', error);
-    return NextResponse.json({ error: 'Failed to fetch notebooks' }, { status: 500 });
+    const files=(await fs.readdir(directory)).filter(file=>file.endsWith('.json')&&store.segment(file.slice(0,-5)));
+    const notebooks=await Promise.all(files.map(async file=>{
+      const target=path.join(directory,file);
+      const raw=JSON.parse(await fs.readFile(target,'utf8'));
+      return {id:file.slice(0,-5),name:typeof raw.name==='string'?raw.name:file.slice(0,-5),updatedAt:(await fs.stat(target)).mtime.toISOString()};
+    }));
+    return NextResponse.json({notebooks:notebooks.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
+  }catch(error){
+    if((error as NodeJS.ErrnoException).code==='ENOENT')return NextResponse.json({notebooks:[]});
+    return NextResponse.json({error:'Notizbücher derzeit nicht verfügbar'},{status:503});
   }
 }

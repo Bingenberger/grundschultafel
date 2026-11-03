@@ -38,6 +38,7 @@ export default function Toolbar() {
   const [showFillSettings, setShowFillSettings] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
   const [qrToken, setQrToken] = useState<string>('');
+  const [qrUrl,setQrUrl] = useState<string>('');
 
   const closeInsertRelatedMenus = () => {
     setShowInsertMenu(false);
@@ -86,8 +87,11 @@ export default function Toolbar() {
     return () => clearInterval(interval);
   }, [showQrModal, qrToken, triggerAddImage]);
 
-  const handleOpenQr = () => {
-    setQrToken(uuidv4());
+  const handleOpenQr = async () => {
+    const response = await fetch('/api/mobile-upload/session',{method:'POST'});
+    if(!response.ok)return;
+    const ticket=await response.json();
+    setQrToken(ticket.token);setQrUrl(ticket.url);
     setShowQrModal(true);
     closeInsertRelatedMenus();
     setShowToolbox(false);
@@ -847,7 +851,7 @@ export default function Toolbar() {
             </p>
             <div style={{ padding: '10px', background: 'white', borderRadius: '8px' }}>
               <QRCodeCanvas
-                value={`${typeof window !== 'undefined' ? window.location.origin : ''}/upload?token=${qrToken}`}
+                value={qrUrl}
                 size={200}
                 level={"M"}
                 includeMargin={true}

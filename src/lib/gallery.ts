@@ -1,3 +1,4 @@
+import {boundedBody} from './platform';
 export type GalleryAssetKind = 'display' | 'thumbnails';
 
 export interface GallerySearchItem {
@@ -9,7 +10,7 @@ export interface GallerySearchItem {
   displayUrl: string;
 }
 
-const GALLERY_ORIGIN = 'https://pix.foerster.rocks';
+export const GALLERY_ORIGIN = process.env.GALLERY_ORIGIN || '';
 
 function htmlDecode(value: string) {
   return value
@@ -88,18 +89,19 @@ function parseGalleryItems(html: string): GallerySearchItem[] {
 }
 
 export async function searchGallery(query: string, page: number) {
+  if(!GALLERY_ORIGIN)throw new Error('Gallery unavailable');
   const res = await fetch(buildSearchUrl(query.trim(), page), {
     headers: {
       'User-Agent': 'TafelPopafel/1.0'
     },
-    cache: 'no-store',
+    cache: 'no-store', redirect:'error', signal:AbortSignal.timeout(5000),
   });
 
   if (!res.ok) {
     throw new Error(`Galerie-Suche fehlgeschlagen: ${res.status}`);
   }
 
-  const html = await res.text();
+  const html = new TextDecoder().decode(await boundedBody(res as any,16*1024*1024));
   const items = parseGalleryItems(html);
   const totalPages = extractTotalPages(html, page);
 

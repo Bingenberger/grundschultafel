@@ -1,80 +1,39 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { getSession } from '@/lib/session';
-
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const USER_DATA_DIR = path.join(process.cwd(), 'data', session.id);
-    const id = (await params).id;
-    const filePath = path.join(USER_DATA_DIR, `${id}.json`);
-    
-    // Check if file exists to prevent throwing hard error
-    try {
-      await fs.access(filePath);
-    } catch {
-      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
-    }
-
-    const data = await fs.readFile(filePath, 'utf-8');
-    return NextResponse.json(JSON.parse(data));
-  } catch (error) {
-    console.error('Error loading notebook:', error);
-    return NextResponse.json({ error: 'Failed to load notebook' }, { status: 500 });
-  }
+export const dynamic='force-dynamic';
+import {NextResponse} from 'next/server';
+import {getSession} from '@/lib/session';
+import {boundedJson} from '@/lib/platform';
+import * as store from '@/lib/file-store.cjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+async function target(params:Promise<{id:string}>) {
+  const session=await getSession();
+  if(!session)return null;
+  const id=(await params).id;
+  if(!store.segment(id))throw new Error('Invalid notebook id');
+  return {session,id,file:path.join(store.dataDir(),session.id,id+'.json')};
 }
-
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_request:Request,{params}:{params:Promise<{id:string}>}){
   try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const USER_DATA_DIR = path.join(process.cwd(), 'data', session.id);
-    const id = (await params).id;
-    const body = await request.json();
-    
-    await fs.mkdir(USER_DATA_DIR, { recursive: true });
-    
-    const filePath = path.join(USER_DATA_DIR, `${id}.json`);
-    await fs.writeFile(filePath, JSON.stringify(body), 'utf-8');
-    
-    return NextResponse.json({ success: true, id });
-  } catch (error) {
-    console.error('Error saving notebook:', error);
-    return NextResponse.json({ error: 'Failed to save notebook' }, { status: 500 });
-  }
+    const row=await target(params);if(!row)return NextResponse.json({error:'Unauthorized'},{status:401});
+    const raw=await fs.readFile(row.file,'utf8');
+    return NextResponse.json(JSON.parse(raw));
+  }catch{return NextResponse.json({error:'Notizbuch nicht verfügbar'},{status:404});}
 }
-
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function PUT(request:Request,{params}:{params:Promise<{id:string}>}){
   try {
-    const session = await getSession();
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const USER_DATA_DIR = path.join(process.cwd(), 'data', session.id);
-    const id = (await params).id;
-    const filePath = path.join(USER_DATA_DIR, `${id}.json`);
-    
-    try {
-      await fs.access(filePath);
-      await fs.unlink(filePath);
-      return NextResponse.json({ success: true });
-    } catch {
-      return NextResponse.json({ error: 'Notebook not found' }, { status: 404 });
-    }
-  } catch (error) {
-    console.error('Error deleting notebook:', error);
-    return NextResponse.json({ error: 'Failed to delete notebook' }, { status: 500 });
-  }
+    const row=await target(params);if(!row)return NextResponse.json({error:'Unauthorized'},{status:401});
+    const body=await boundedJson(request,20*1024*1024);
+    const lock='notebook-'+createHash('sha256').update(row.session.id+':'+row.id).digest('hex');
+    await store.lock(lock,async()=>store.atomic(row.file,body));
+    return NextResponse.json({success:true,id:row.id});
+  }catch{return NextResponse.json({error:'Notizbuch konnte nicht gespeichert werden'},{status:400});}
+}
+export async function DELETE(_request:Request,{params}:{params:Promise<{id:string}>}){
+  try {
+    const row=await target(params);if(!row)return NextResponse.json({error:'Unauthorized'},{status:401});
+    const lock='notebook-'+createHash('sha256').update(row.session.id+':'+row.id).digest('hex');
+    await store.lock(lock,async()=>fs.unlink(row.file));
+    return NextResponse.json({success:true});
+  }catch{return NextResponse.json({error:'Notizbuch nicht verfügbar'},{status:404});}
 }

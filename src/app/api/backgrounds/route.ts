@@ -1,10 +1,12 @@
+export const dynamic='force-dynamic';
+import * as store from '@/lib/file-store.cjs';
 import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 export async function GET() {
   try {
-    const backgroundsDir = path.join(process.cwd(), 'public', 'assets', 'backgrounds');
+    const backgroundsDir = path.join(store.assetDir(), 'backgrounds');
     
     // Check if directory exists
     try {
@@ -21,7 +23,7 @@ export async function GET() {
 
     return NextResponse.json({ backgrounds });
   } catch (error) {
-    console.error('Error fetching backgrounds:', error);
+    console.error('Asset operation failed');
     return NextResponse.json({ error: 'Failed to fetch backgrounds' }, { status: 500 });
   }
 }

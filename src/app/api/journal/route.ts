@@ -1,16 +1,18 @@
+export const dynamic='force-dynamic';
+import * as store from '@/lib/file-store.cjs';
 import { NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 
 export async function GET() {
   try {
-    const dirPath = path.join(process.cwd(), 'public', 'assets', 'journal');
+    const dirPath = path.join(store.assetDir(), 'journal');
     
     // Check if directory exists, if not create it
     try {
       await fs.access(dirPath);
     } catch {
-      await fs.mkdir(dirPath, { recursive: true });
+      return NextResponse.json({images:[]});
     }
 
     const files = await fs.readdir(dirPath);
@@ -28,7 +30,7 @@ export async function GET() {
     const urls = images.map(file => `/assets/journal/${file}`);
     return NextResponse.json({ images: urls });
   } catch (error) {
-    console.error('Error reading journal directory:', error);
+    console.error('Asset operation failed');
     return NextResponse.json({ error: 'Failed to read images' }, { status: 500 });
   }
 }

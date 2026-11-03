@@ -1,90 +1,25 @@
-import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
-
-// Pending uploads are stored as files so all worker processes can see them.
-// File name: <token>.pending, content: the public URL of the uploaded image.
-const pendingDir = path.join(process.cwd(), 'data', 'pending-uploads');
-
-async function ensurePendingDir() {
-  try { await fs.access(pendingDir); } catch { await fs.mkdir(pendingDir, { recursive: true }); }
-}
-
-function sanitizeToken(token: string) {
-  return token.replace(/[^a-zA-Z0-9-]/g, '');
-}
-
-export async function POST(request: Request) {
+export const dynamic='force-dynamic';
+import {NextResponse} from 'next/server';
+import {getSession} from '@/lib/session';
+import {boundedBody} from '@/lib/platform';
+import * as mobile from '@/lib/mobile-store.cjs';
+export async function POST(request:Request) {
   try {
-    const formData = await request.formData();
-    const rawToken = formData.get('token') as string;
-    const file = formData.get('image') as File;
-
-    if (!rawToken || !file) {
-      return NextResponse.json({ error: 'Missing token or image' }, { status: 400 });
-    }
-    const token = sanitizeToken(rawToken);
-
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
-    const uploadDir = path.join(process.cwd(), 'public', 'assets', 'uploads');
-    try { await fs.access(uploadDir); } catch { await fs.mkdir(uploadDir, { recursive: true }); }
-
-    const filename = `${token}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-    const filePath = path.join(uploadDir, filename);
-    await fs.writeFile(filePath, buffer);
-
-    const publicUrl = `/assets/uploads/${filename}`;
-
-    // Write token → URL mapping to disk so all workers can read it
-    await ensurePendingDir();
-    const pendingPath = path.join(pendingDir, `${token}.pending`);
-    await fs.writeFile(pendingPath, publicUrl, 'utf-8');
-    console.log(`[mobile-upload] POST OK: wrote ${pendingPath}`);
-
-    return NextResponse.json({ success: true, url: publicUrl });
-  } catch (error) {
-    console.error('[mobile-upload] POST error:', error);
-    return NextResponse.json({ error: 'Failed to process upload' }, { status: 500 });
-  }
+    const bytes=await boundedBody(request,6*1024*1024);
+    const form=await new Response(bytes as BodyInit,{headers:{'Content-Type':request.headers.get('content-type')||''}}).formData();
+    const token=form.get('token');
+    const image=form.get('image');
+    if(typeof token!=='string'||!(image instanceof File)) throw new Error('Invalid upload');
+    const url=await mobile.upload(token,Buffer.from(await image.arrayBuffer()));
+    return NextResponse.json({success:true,url});
+  } catch {return NextResponse.json({error:'Upload ungültig, abgelaufen oder belegt. PNG, JPEG oder WebP bis 5 MiB verwenden.'},{status:400});}
 }
-
-export async function GET(request: Request) {
+export async function GET(request:Request) {
+  const session=await getSession();
+  if(!session) return NextResponse.json({error:'Unauthorized'},{status:401});
   try {
-    const url = new URL(request.url);
-    const rawToken = url.searchParams.get('token');
-
-    if (!rawToken) {
-      return NextResponse.json({ error: 'Token is required' }, { status: 400 });
-    }
-    const token = sanitizeToken(rawToken);
-    const pendingFile = path.join(pendingDir, `${token}.pending`);
-
-    try {
-      const relativeUrl = (await fs.readFile(pendingFile, 'utf-8')).trim();
-      await fs.unlink(pendingFile); // consume once
-
-      // Read the image file and return as data URL.
-      // Next.js does not reliably serve dynamically-written public/ files in production,
-      // so we serve the bytes here directly instead of returning a path.
-      const imagePath = path.join(process.cwd(), 'public', relativeUrl);
-      const imageBuffer = await fs.readFile(imagePath);
-      const ext = path.extname(relativeUrl).slice(1).toLowerCase();
-      const mime = (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg'
-        : ext === 'png' ? 'image/png'
-        : ext === 'webp' ? 'image/webp'
-        : 'image/jpeg';
-      const dataUrl = `data:${mime};base64,${imageBuffer.toString('base64')}`;
-
-      console.log(`[mobile-upload] GET: returning data URL for ${relativeUrl} (${imageBuffer.length} bytes)`);
-      return NextResponse.json({ imageUrl: dataUrl });
-    } catch {
-      // Pending file doesn't exist yet — upload not received
-      return NextResponse.json({ imageUrl: null });
-    }
-  } catch (error) {
-    console.error('[mobile-upload] GET error:', error);
-    return NextResponse.json({ error: 'Failed to poll upload' }, { status: 500 });
-  }
+    const token=new URL(request.url).searchParams.get('token');
+    const imageUrl=await mobile.poll(token,session.id);
+    return NextResponse.json({imageUrl});
+  } catch {return NextResponse.json({error:'Upload nicht verfügbar'},{status:404});}
 }

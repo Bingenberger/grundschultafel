@@ -1,10 +1,12 @@
+export const dynamic='force-dynamic';
+import * as store from '@/lib/file-store.cjs';
 import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 export async function GET() {
   try {
-    const galleryDir = path.join(process.cwd(), 'public', 'assets', 'gallery');
+    const galleryDir = path.join(store.assetDir(), 'gallery');
 
     try {
       await fs.access(galleryDir);
@@ -32,7 +34,7 @@ export async function GET() {
 
     return NextResponse.json({ folders });
   } catch (error) {
-    console.error('Error fetching local gallery folders:', error);
+    console.error('Asset operation failed');
     return NextResponse.json({ error: 'Failed to fetch local gallery folders' }, { status: 500 });
   }
 }

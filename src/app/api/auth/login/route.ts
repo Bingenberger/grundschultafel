@@ -1,103 +1,36 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getUser, consumeBootstrap } from '@/lib/users';
-import { createSession } from '@/lib/session';
-import bcrypt from 'bcryptjs';
-
-interface AttemptRecord {
-  count: number;
-  firstAttempt: number;
-  lockedUntil: number;
-}
-
-const loginAttempts = new Map<string, AttemptRecord>();
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_MS = 15 * 60 * 1000;
-const WINDOW_MS = 15 * 60 * 1000;
-
-function getIp(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown';
-}
-
-function checkRateLimit(ip: string): { allowed: boolean; retryAfterSeconds?: number } {
-  const now = Date.now();
-  const record = loginAttempts.get(ip);
-  if (!record) return { allowed: true };
-  if (record.lockedUntil > now) {
-    return { allowed: false, retryAfterSeconds: Math.ceil((record.lockedUntil - now) / 1000) };
-  }
-  if (now - record.firstAttempt > WINDOW_MS) {
-    loginAttempts.delete(ip);
-    return { allowed: true };
-  }
-  return { allowed: true };
-}
-
-function recordFailedAttempt(ip: string): void {
-  const now = Date.now();
-  const record = loginAttempts.get(ip);
-  if (!record || now - record.firstAttempt > WINDOW_MS) {
-    loginAttempts.set(ip, { count: 1, firstAttempt: now, lockedUntil: 0 });
-    return;
-  }
-  const newCount = record.count + 1;
-  loginAttempts.set(ip, {
-    ...record,
-    count: newCount,
-    lockedUntil: newCount >= MAX_ATTEMPTS ? now + LOCKOUT_MS : 0,
+import {NextResponse} from 'next/server';
+import {authenticate,getUser} from '@/lib/users';
+import {createSession} from '@/lib/session';
+import {boundedJson} from '@/lib/platform';
+import * as store from '@/lib/file-store.cjs';
+import path from 'node:path';
+import fs from 'node:fs';
+async function attempt(username:string, failed?:boolean) {
+  return store.lock('attempts',async()=>{
+    const file=path.join(store.dataDir(),'login-attempts.json');
+    let rows:Record<string,{count:number,until:number,start:number}>={};
+    try{rows=JSON.parse(fs.readFileSync(file,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    const key=(await getUser(username))?username.toLowerCase():'_unknown';
+    const now=Date.now();const row=rows[key];
+    if(failed===undefined)return !row||row.until<=now;
+    if(!failed)delete rows[key];
+    else {
+      const current=!row||now-row.start>900000?{count:0,until:0,start:now}:row;
+      current.count++;if(current.count>=5)current.until=now+900000;rows[key]=current;
+    }
+    for(const name of Object.keys(rows))if(now-rows[name].start>1800000&&rows[name].until<=now)delete rows[name];
+    store.atomic(file,rows);return true;
   });
 }
-
-function clearAttempts(ip: string): void {
-  loginAttempts.delete(ip);
-}
-
-export async function POST(request: NextRequest) {
-  const ip = getIp(request);
-
-  const rateCheck = checkRateLimit(ip);
-  if (!rateCheck.allowed) {
-    const minutes = Math.ceil(rateCheck.retryAfterSeconds! / 60);
-    return NextResponse.json(
-      { error: `Zu viele Versuche. Bitte in ${minutes} Minute(n) erneut versuchen.` },
-      { status: 429 }
-    );
-  }
-
+export async function POST(request:Request) {
   try {
-    const { username, password } = await request.json();
-
-    if (!username || !password) {
-      return NextResponse.json({ error: 'Benutzername und Passwort sind erforderlich' }, { status: 400 });
-    }
-
-    const user = await getUser(username);
-
-    if (!user || (user.bootstrapExpiresAt !== undefined && user.bootstrapExpiresAt <= Date.now())) {
-      recordFailedAttempt(ip);
-      return NextResponse.json({ error: 'Ungültige Anmeldedaten' }, { status: 401 });
-    }
-
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-
-    if (!passwordMatches || !await consumeBootstrap(user)) {
-      recordFailedAttempt(ip);
-      return NextResponse.json({ error: 'Ungültige Anmeldedaten' }, { status: 401 });
-    }
-
-    clearAttempts(ip);
-
-    await createSession({
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      mustChangePassword: user.mustChangePassword ?? false,
-    });
-
-    const redirect = user.mustChangePassword ? '/change-password' : '/';
-    return NextResponse.json({ success: true, redirect });
-
-  } catch (error) {
-    console.error('Login error:', error);
-    return NextResponse.json({ error: 'Ein Fehler ist aufgetreten' }, { status: 500 });
-  }
+    const {username,password}=await boundedJson(request);
+    if(typeof username!=='string'||typeof password!=='string'||username.length>80||password.length>256) return NextResponse.json({error:'Ungültige Anmeldedaten'},{status:400});
+    if(!await attempt(username))return NextResponse.json({error:'Zu viele Versuche. Bitte später erneut versuchen.'},{status:429,headers:{'Retry-After':'900'}});
+    const user=await authenticate(username,password);
+    if(!user){await attempt(username,true);return NextResponse.json({error:'Ungültige Anmeldedaten'},{status:401});}
+    await attempt(username,false);
+    await createSession({id:user.id,username:user.username,role:user.role,mustChangePassword:user.mustChangePassword??false},user.passwordHash);
+    return NextResponse.json({success:true,redirect:user.mustChangePassword?'/change-password':'/'});
+  }catch{return NextResponse.json({error:'Anmeldung fehlgeschlagen'},{status:400});}
 }

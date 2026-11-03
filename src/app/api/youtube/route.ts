@@ -1,3 +1,4 @@
+export const dynamic='force-dynamic';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
@@ -9,6 +10,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Search query is required' }, { status: 400 });
     }
 
+    if(process.env.TAFEL_YOUTUBE_ENABLED!=='1')return NextResponse.json({error:'Videosuche derzeit nicht verfügbar'},{status:503});
     const API_KEY = process.env.YOUTUBE_API_KEY;
     if (!API_KEY) {
       return NextResponse.json({ error: 'YouTube API key not configured' }, { status: 500 });
@@ -19,14 +21,14 @@ export async function GET(request: Request) {
     );
 
     if (!response.ok) {
-      console.error('YouTube API Error:', await response.text());
+      console.error('Video search unavailable');
       throw new Error(`YouTube API returned ${response.status}`);
     }
 
     const data = await response.json();
     return NextResponse.json({ items: data.items });
   } catch (error) {
-    console.error('Error fetching from YouTube:', error);
+    console.error('Video search unavailable');
     return NextResponse.json({ error: 'Failed to fetch videos' }, { status: 500 });
   }
 }

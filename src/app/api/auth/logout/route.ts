@@ -6,7 +6,7 @@ export async function POST() {
     await clearSession();
     return NextResponse.json({ success: true, redirect: '/login' });
   } catch (error) {
-    console.error('Logout error:', error);
+    console.error('Logout unavailable');
     return NextResponse.json({ error: 'Fehler beim Abmelden' }, { status: 500 });
   }
 }

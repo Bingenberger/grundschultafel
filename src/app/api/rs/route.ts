@@ -1,10 +1,12 @@
+export const dynamic='force-dynamic';
+import * as store from '@/lib/file-store.cjs';
 import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 export async function GET() {
   try {
-    const rsDir = path.join(process.cwd(), 'public', 'assets', 'rs');
+    const rsDir = path.join(store.assetDir(), 'rs');
 
     try {
       await fs.access(rsDir);
@@ -22,7 +24,7 @@ export async function GET() {
 
     return NextResponse.json({ images });
   } catch (error) {
-    console.error('Error fetching RS symbols:', error);
+    console.error('Asset operation failed');
     return NextResponse.json({ error: 'Failed to fetch RS symbols' }, { status: 500 });
   }
 }
