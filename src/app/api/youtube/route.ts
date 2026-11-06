@@ -1,5 +1,15 @@
 export const dynamic='force-dynamic';
 import { NextResponse } from 'next/server';
+import { readFileSync } from 'node:fs';
+
+// Platform: key as a mounted secret file (YOUTUBE_API_KEY_FILE); standalone: YOUTUBE_API_KEY.
+function youtubeKey() {
+  const file = process.env.YOUTUBE_API_KEY_FILE;
+  if (file) {
+    try { return readFileSync(file, 'utf8').trim(); } catch { return ''; }
+  }
+  return (process.env.YOUTUBE_API_KEY || '').trim();
+}
 
 export async function GET(request: Request) {
   try {
@@ -11,9 +21,9 @@ export async function GET(request: Request) {
     }
 
     if(process.env.TAFEL_YOUTUBE_ENABLED!=='1')return NextResponse.json({error:'Videosuche derzeit nicht verfügbar'},{status:503});
-    const API_KEY = process.env.YOUTUBE_API_KEY;
+    const API_KEY = youtubeKey();
     if (!API_KEY) {
-      return NextResponse.json({ error: 'YouTube API key not configured' }, { status: 500 });
+      return NextResponse.json({ error: 'Videosuche derzeit nicht verfügbar' }, { status: 503 });
     }
 
     const response = await fetch(
