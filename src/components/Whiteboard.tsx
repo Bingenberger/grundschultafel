@@ -2298,6 +2298,9 @@ export default function Whiteboard() {
             height="100%"
             src={`https://www.youtube-nocookie.com/embed/${video.youtubeId}`}
             title="YouTube video player"
+            // The app sends Referrer-Policy: no-referrer; YouTube refuses embeds without a referrer
+            // (error 153). Only the origin is sent, never the path.
+            referrerPolicy="strict-origin-when-cross-origin"
             frameBorder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
