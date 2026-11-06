@@ -359,6 +359,11 @@ function TimerOverlay({ timer, activeTool, isSelected }: { timer: TimerRect, act
   );
 }
 
+// Custom object properties that must survive serialisation (saving, undo, page switch).
+// Fabric >= 6 ignores arguments to canvas.toJSON(); custom properties are only
+// serialised when registered globally via FabricObject.customProperties.
+fabric.FabricObject.customProperties = ['id', 'youtubeId', 'timerType', 'url', 'isRuler', 'isLockedStroke', 'isFill'];
+
 export default function Whiteboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -366,7 +371,6 @@ export default function Whiteboard() {
   const [fabricCanvas, setFabricCanvas] = useState<fabric.Canvas | null>(null);
 
   // --- Undo / Redo history (per page, keyed by pageId) ---
-  const CANVAS_JSON_KEYS = ['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke'];
   const MAX_HISTORY = 50;
   const historyRef = useRef<Record<string, { stack: any[]; index: number }>>({});
   const isHistoryLocked = useRef(false);
@@ -381,6 +385,10 @@ export default function Whiteboard() {
   };
 
   const pushToHistory = (pageId: string, json: any) => {
+    // Every history snapshot is also the latest page state; keep the store in sync so
+    // saving a notebook includes objects that were added without an explicit save call
+    // (YouTube videos, timers, backgrounds, …).
+    useWhiteboardStore.getState().updatePageData(pageId, json);
     const hist = getPageHistory(pageId);
     if (hist.index < hist.stack.length - 1) {
       hist.stack = hist.stack.slice(0, hist.index + 1);
@@ -633,7 +641,7 @@ export default function Whiteboard() {
     if (!fabricCanvas) return;
     const hist = getPageHistory(currentPageId);
     if (hist.index === -1) {
-      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      const json = fabricCanvas.toJSON();
       hist.stack = [json];
       hist.index = 0;
     }
@@ -653,20 +661,20 @@ export default function Whiteboard() {
       historyDebounceTimer.current = setTimeout(() => {
         historyDebounceTimer.current = null;
         if (isHistoryLocked.current || !fabricCanvas) return;
-        const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+        const json = fabricCanvas.toJSON();
         pushToHistory(currentPageIdRef.current, json);
       }, 80);
     };
 
     const onPathCreated = () => {
       if (isHistoryLocked.current) return;
-      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      const json = fabricCanvas.toJSON();
       pushToHistory(currentPageIdRef.current, json);
     };
 
     const onObjectModified = () => {
       if (isHistoryLocked.current) return;
-      const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+      const json = fabricCanvas.toJSON();
       pushToHistory(currentPageIdRef.current, json);
     };
 
@@ -882,7 +890,7 @@ export default function Whiteboard() {
           fabricCanvas.sendObjectToBack(img);
           fabricCanvas.requestRenderAll();
           const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke', 'isFill']));
+          updatePageData(currentPageId, fabricCanvas.toJSON());
         });
       } else if (activeTool === 'text') {
         const pointer = options.scenePoint || options.pointer || { x: 100, y: 100 };
@@ -940,7 +948,7 @@ export default function Whiteboard() {
           if (event.target !== textObject) return;
           fabricCanvas.off('text:editing:exited', handleEditingExited);
           const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
+          updatePageData(currentPageId, fabricCanvas.toJSON());
           setActiveTool('move');
         };
 
@@ -1152,7 +1160,7 @@ export default function Whiteboard() {
         }
         canvas.renderAll();
         const { updatePageData: upd, currentPageId: pid } = useWhiteboardStore.getState();
-        const canvasJson = (canvas as any).toJSON(CANVAS_JSON_KEYS);
+        const canvasJson = canvas.toJSON();
         upd(pid, canvasJson);
         consumeNewImage();
 
@@ -1224,7 +1232,7 @@ export default function Whiteboard() {
             canvas.remove(target);
             canvas.requestRenderAll();
             const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, canvas.toJSON(['id', 'youtubeId', 'timerType', 'url', 'isLockedStroke']));
+            updatePageData(currentPageId, canvas.toJSON());
           }
           return true;
         },
@@ -1314,7 +1322,7 @@ export default function Whiteboard() {
             canvas.remove(target);
             canvas.requestRenderAll();
             const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, canvas.toJSON(['id', 'youtubeId', 'timerType', 'url', 'isLockedStroke']));
+            updatePageData(currentPageId, canvas.toJSON());
           }
           return true;
         },
@@ -1387,7 +1395,7 @@ export default function Whiteboard() {
             canvas.remove(target);
             canvas.requestRenderAll();
             const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, (canvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
+            updatePageData(currentPageId, canvas.toJSON());
           }
           return true;
         };
@@ -1423,7 +1431,7 @@ export default function Whiteboard() {
         
         // Save state immediately
         const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-        updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
+        updatePageData(currentPageId, fabricCanvas.toJSON());
       }
 
       consumeNewShape();
@@ -1513,7 +1521,7 @@ export default function Whiteboard() {
           canvas.remove(target);
           canvas.requestRenderAll();
           const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, (canvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
+          updatePageData(currentPageId, canvas.toJSON());
         })
       };
       // --- End Delete Control ---
@@ -1523,7 +1531,7 @@ export default function Whiteboard() {
       fabricCanvas.renderAll();
       
       const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-      updatePageData(currentPageId, (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']));
+      updatePageData(currentPageId, fabricCanvas.toJSON());
 
       consumeNewRuler();
       useWhiteboardStore.getState().setActiveTool('move');
@@ -1574,7 +1582,7 @@ export default function Whiteboard() {
 
     // Save old page state only when switching pages within the same notebook
     if (pageChanged) {
-      const oldJson: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+      const oldJson: any = fabricCanvas.toJSON();
       updatePageData(prevPageId.current, oldJson);
     }
 
@@ -1604,7 +1612,7 @@ export default function Whiteboard() {
           // Baseline entry so the user can undo back to the loaded state
           const hist = getPageHistory(currentPageId);
           if (hist.index === -1) {
-            const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+            const json = fabricCanvas.toJSON();
             hist.stack = [json];
             hist.index = 0;
             useWhiteboardStore.getState().setCanUndo(false);
@@ -1622,7 +1630,7 @@ export default function Whiteboard() {
       // Baseline: empty canvas
       const hist = getPageHistory(currentPageId);
       if (hist.index === -1) {
-        const json = (fabricCanvas as any).toJSON(CANVAS_JSON_KEYS);
+        const json = fabricCanvas.toJSON();
         hist.stack = [json];
         hist.index = 0;
         useWhiteboardStore.getState().setCanUndo(false);
@@ -1839,7 +1847,7 @@ export default function Whiteboard() {
       if (isErasing) {
         isErasing = false;
         // Save state after we're done erasing
-        const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+        const json: any = fabricCanvas.toJSON();
         updatePageData(currentPageId, json);
       } else if (activeTool === 'rs' && rsStartPoint) {
         if (!rsPointerDownOnObject && !rsMoved) {
@@ -1849,10 +1857,10 @@ export default function Whiteboard() {
           setRsPicker({ left: rsStartPoint.x, top: rsStartPoint.y });
         } else if (!rsPointerDownOnObject && isDrawingRs && snapLine) {
           snapLine.setCoords();
-          const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+          const json: any = fabricCanvas.toJSON();
           updatePageData(currentPageId, json);
         } else if (rsPointerDownOnObject && rsMoved) {
-          const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+          const json: any = fabricCanvas.toJSON();
           updatePageData(currentPageId, json);
         }
         snapLine = null;
@@ -1869,7 +1877,7 @@ export default function Whiteboard() {
         // Only restore freehand if not in straight line mode
         fabricCanvas.isDrawingMode = !useWhiteboardStore.getState().isStraightLineMode;
         
-        const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+        const json: any = fabricCanvas.toJSON();
         updatePageData(currentPageId, json);
       } else if (isDrawingStraight) {
         isDrawingStraight = false;
@@ -1877,7 +1885,7 @@ export default function Whiteboard() {
         snapLine = null;
         activeRuler = null;
         
-        const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+        const json: any = fabricCanvas.toJSON();
         updatePageData(currentPageId, json);
       }
     };
@@ -1892,13 +1900,13 @@ export default function Whiteboard() {
 
     const saveStateForPath = () => {
       if ((activeTool === 'pen' || activeTool === 'rs') && !isSnapping && !isDrawingStraight && !isDrawingRs) {
-        const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+        const json: any = fabricCanvas.toJSON();
         updatePageData(currentPageId, json);
       }
     };
 
     const saveStateForModified = () => {
-      const json: any = (fabricCanvas as any).toJSON(['id', 'youtubeId', 'timerType', 'isRuler', 'isLockedStroke']);
+      const json: any = fabricCanvas.toJSON();
       updatePageData(currentPageId, json);
     };
 

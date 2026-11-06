@@ -63,6 +63,8 @@ export default function Sidebar() {
     }
 
     try {
+      // Read the freshest state at click time (not the value captured at render)
+      const { pages, journalImages } = useWhiteboardStore.getState();
       const payload = { name, pages, journalImages };
       console.log('[Save] Speichere Heft, Seiten:', pages.length, '– Objekte pro Seite:', pages.map(p => (p.canvasData as any)?.objects?.length ?? 'kein canvasData'));
       const res = await fetch(`/api/notebooks/${id}`, {
