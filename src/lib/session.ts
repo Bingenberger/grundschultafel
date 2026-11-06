@@ -44,6 +44,32 @@ export async function createSession(payload:SessionPayload,credentialHash?:strin
   jar.set('tafel_device',device,options);
   jar.set('session',await encrypt({...payload,sid}),options);
 }
+// --- Known devices -----------------------------------------------------------------
+// After a successful login the browser keeps a signed, long-lived cookie naming the
+// accounts that have logged in on it. Login failures from such a device are counted
+// separately, so strangers guessing PINs for a (publicly listed) name cannot lock the
+// teacher out of their own board. Shared classroom boards can remember several accounts.
+const KNOWN_DEVICE_COOKIE='tafel_known';
+const KNOWN_DEVICE_MAX_USERS=50;
+export interface KnownDevice {nonce:string;users:string[]}
+export async function knownDevice():Promise<KnownDevice|null> {
+  try {
+    const jar=await cookies();
+    const value=jar.get(KNOWN_DEVICE_COOKIE)?.value;
+    if(!value) return null;
+    const {payload}=await jwtVerify(value,getKey(),{algorithms:['HS256']});
+    if(payload.typ!=='known-device'||typeof payload.nonce!=='string'||!Array.isArray(payload.users)) return null;
+    return {nonce:payload.nonce,users:payload.users.filter((u):u is string=>typeof u==='string')};
+  } catch {return null;}
+}
+export async function rememberDevice(userId:string) {
+  const current=await knownDevice();
+  const users=[userId,...(current?.users??[]).filter(u=>u!==userId)].slice(0,KNOWN_DEVICE_MAX_USERS);
+  const nonce=current?.nonce??randomBytes(16).toString('base64url');
+  const token=await new SignJWT({typ:'known-device',nonce,users}).setProtectedHeader({alg:'HS256'}).setIssuedAt().setExpirationTime('365d').sign(getKey());
+  const jar=await cookies();
+  jar.set(KNOWN_DEVICE_COOKIE,token,{httpOnly:true,secure:(process.env.BASE_URL||'').startsWith('https://'),sameSite:'strict',path:'/',maxAge:365*24*60*60});
+}
 export async function clearSession() {
   const jar=await cookies();
   const claims=await decrypt(jar.get('session')?.value||'');

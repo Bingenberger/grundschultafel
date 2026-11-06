@@ -11,7 +11,8 @@ export async function GET(_request:Request,{params}:{params:Promise<{segments:st
     if(!segments.length||segments.some(value=>!store.segment(value)))throw new Error('Invalid asset');
     if(!['backgrounds','journal','rs','gallery','uploads'].includes(segments[0]))throw new Error('Invalid category');
     if(segments[0]==='uploads'&&segments[1]!==session.id)throw new Error('Private asset');
-    const root=path.resolve(store.assetDir());
+    // Resolve symlinks on both sides, so a symlinked data/asset directory keeps working
+    const root=await fs.realpath(path.resolve(store.assetDir()));
     const file=await fs.realpath(path.join(root,...segments));
     if(!file.startsWith(root+path.sep)||(await fs.stat(file)).size>16*1024*1024)throw new Error('Invalid asset');
     const types:Record<string,string>={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif','.svg':'image/svg+xml'};
