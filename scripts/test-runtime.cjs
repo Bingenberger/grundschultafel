@@ -70,16 +70,35 @@ async function test(name,fn){await fn();console.log('PASS '+name);count++;}
   const metadata=JSON.parse(fs.readFileSync(expiryfile));metadata.expires=0;store.atomic(expiryfile,metadata);assert.equal(sessions.verify(expiry,key),null);
   const deleted=await sessions.issue(rows[0],key);store.atomic(path.join(store.dataDir(),'users.json'),rows.slice(1));assert.equal(sessions.verify(deleted,key),null);
  });
+ await test('stale locks of a crashed earlier incarnation are taken over',async()=>{
+  // simulate a crash: lock dir left behind with this PID but another incarnation
+  const dir=path.join(store.dataDir(),'.lock-users');fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir,'pid'),JSON.stringify({pid:process.pid,instance:'crashed'}));
+  await store.lock('users',async()=>{});
+  fs.mkdirSync(dir);fs.writeFileSync(path.join(dir,'pid'),String(process.pid)); // legacy format
+  await store.lock('users',async()=>{});
+  assert.equal(fs.existsSync(dir),false);
+ });
+ await test('per-user session limit ends the oldest session instead of refusing login',async()=>{
+  const user=store.users()[0],key=device();
+  const sids=[];for(let i=0;i<12;i++)sids.push(await sessions.issue(user,key));
+  assert.equal(sessions.verify(sids[0],key),null);assert.equal(sessions.verify(sids[1],key),null);
+  assert.equal(sessions.verify(sids[11],key).id,user.id);
+  fs.writeFileSync(path.join(store.dataDir(),'sessions','0'.repeat(64)+'.json'),'{corrupt');
+  assert.ok(await sessions.issue(user,key));
+  for(const sid of sids)sessions.revoke(sid);
+ });
  await test('mobile tickets reject arbitrary, expired, foreign and repeated use',async()=>{
   const bytes=Buffer.from('89504e470d0a1a0a00000000','hex'),ticket=await mobile.issue('worker-1');
   await assert.rejects(mobile.upload(device(),bytes));
   const url=await mobile.upload(ticket,bytes);assert.match(url,/^\/assets\/uploads\/worker-1\/[a-f0-9-]+\.png$/);
   await assert.rejects(mobile.upload(ticket,bytes));await assert.rejects(mobile.poll(ticket,'worker-2'));
+  const file=path.join(store.assetDir(),url.slice('/assets/'.length));assert.equal(fs.statSync(file).mode&0o777,0o600);
   assert.equal(await mobile.poll(ticket,'worker-1'),'data:image/png;base64,'+bytes.toString('base64'));
+  assert.equal(fs.existsSync(file),false,'picked-up upload is deleted');
   assert.equal(await mobile.poll(ticket,'worker-1'),null);
   const expired=await mobile.issue('worker-1',Date.now()-16*60*1000);await assert.rejects(mobile.upload(expired,bytes));
   const pending=await mobile.issue('worker-1');await assert.rejects(mobile.upload(pending,Buffer.from('<script>')));await assert.rejects(mobile.upload(pending,Buffer.alloc(5*1024*1024+1)));
-  const file=path.join(store.assetDir(),url.slice('/assets/'.length));assert.equal(fs.statSync(file).mode&0o777,0o600);
  });
  await test('mobile outstanding ticket quota is finite',async()=>{
   for(let i=0;i<20;i++)await mobile.issue('quota-user');

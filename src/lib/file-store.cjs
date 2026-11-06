@@ -15,6 +15,23 @@ function atomic(file, value) {
   try { fs.renameSync(temporary,file); const dir = fs.openSync(path.dirname(file),'r'); try {fs.fsyncSync(dir);} finally {fs.closeSync(dir);} }
   finally {if (fs.existsSync(temporary)) fs.unlinkSync(temporary);}
 }
+// Identifies this process incarnation. PIDs alone are not enough: in a container the
+// restarted server usually gets the same small PID as the crashed one that left a lock.
+const INSTANCE = crypto.randomUUID();
+// Locks guard short file operations; one older than this was left behind by a crash
+// (e.g. by a replica in another PID namespace, where the PID check is meaningless).
+const STALE_LOCK_MS = 30000;
+function lockIsStale(dir, content) {
+  let owner;
+  try {owner = JSON.parse(content);} catch {owner = null;}
+  if (!owner || typeof owner !== 'object') owner = {pid:Number(content)}; // legacy format: plain PID
+  if (owner && owner.instance === INSTANCE) return false; // held by this very process
+  if (owner && owner.pid === process.pid) return true;   // our PID, but an earlier incarnation
+  let alive = true;
+  try {process.kill(owner.pid,0);} catch(e) {if(e.code === 'ESRCH') alive=false;}
+  if (!alive) return true;
+  return Date.now()-fs.statSync(dir).mtimeMs > STALE_LOCK_MS;
+}
 async function lock(name, action) {
   if (!/^[a-zA-Z0-9-]+$/.test(name)) throw new Error('Invalid operation lock');
   fs.mkdirSync(dataDir(),{recursive:true,mode:0o700});
@@ -23,15 +40,12 @@ async function lock(name, action) {
   while (true) {
     try {
       fs.mkdirSync(dir,{mode:0o700});
-      fs.writeFileSync(path.join(dir,'pid'),String(process.pid),{mode:0o600,flag:'wx'});
+      fs.writeFileSync(path.join(dir,'pid'),JSON.stringify({pid:process.pid,instance:INSTANCE}),{mode:0o600,flag:'wx'});
       break;
     } catch(error) {
       if (error.code !== 'EEXIST') throw error;
       try {
-        const owner = Number(fs.readFileSync(path.join(dir,'pid'),'utf8'));
-        let alive = true;
-        try {process.kill(owner,0);} catch(e) {if(e.code === 'ESRCH') alive=false;}
-        if (!alive) {fs.unlinkSync(path.join(dir,'pid'));fs.rmdirSync(dir);continue;}
+        if (lockIsStale(dir, fs.readFileSync(path.join(dir,'pid'),'utf8'))) {fs.unlinkSync(path.join(dir,'pid'));fs.rmdirSync(dir);continue;}
       } catch(e) {
         if (e.code === 'ENOENT' && fs.existsSync(dir) && Date.now()-fs.statSync(dir).mtimeMs>2000) {
           try {fs.rmdirSync(dir);} catch {}

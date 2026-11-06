@@ -39,6 +39,12 @@ async function upload(token,bytes,now=Date.now()) {
     if(row.expires<=now||row.state!=='waiting') throw new Error('Upload ticket expired or used');
     const directory=path.join(store.assetDir(),'uploads',row.owner);
     fs.mkdirSync(directory,{recursive:true,mode:0o700});
+    // Uploads are only a hand-over to the board (tickets live 15 minutes); anything older
+    // than a day was never picked up and only blocks the quota.
+    for(const name of fs.readdirSync(directory)){
+      const target=path.join(directory,name);
+      if(now-fs.statSync(target).mtimeMs>24*60*60*1000)fs.unlinkSync(target);
+    }
     const existing=fs.readdirSync(directory);
     const size=existing.reduce((n,name)=>n+fs.statSync(path.join(directory,name)).size,0);
     if(existing.length>=200||size+bytes.length>100*1024*1024) throw new Error('Upload storage busy');
@@ -55,8 +61,11 @@ async function poll(token,owner,now=Date.now()) {
     const row=read(token);
     if(row.owner!==owner||row.expires<=now) throw new Error('Upload ticket unavailable');
     if(row.state!=='available') return null;
-    const bytes=fs.readFileSync(path.join(store.assetDir(),'uploads',owner,row.name));
+    const upload=path.join(store.assetDir(),'uploads',owner,row.name);
+    const bytes=fs.readFileSync(upload);
     row.state='consumed';store.atomic(file(token),row);
+    // The board stores the image inline as a data URL; the file is no longer needed
+    fs.unlinkSync(upload);
     return 'data:'+row.mime+';base64,'+bytes.toString('base64');
   });
 }
