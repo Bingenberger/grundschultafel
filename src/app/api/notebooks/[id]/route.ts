@@ -23,11 +23,17 @@ export async function GET(_request:Request,{params}:{params:Promise<{id:string}>
 export async function PUT(request:Request,{params}:{params:Promise<{id:string}>}){
   try {
     const row=await target(params);if(!row)return NextResponse.json({error:'Unauthorized'},{status:401});
+    // Next's proxy truncates bodies above its limit, so reject oversized saves by header first
+    if(Number(request.headers.get('content-length')||0)>20*1024*1024)return NextResponse.json({error:'Notizbuch ist zu groß'},{status:413});
     const body=await boundedJson(request,20*1024*1024);
     const lock='notebook-'+createHash('sha256').update(row.session.id+':'+row.id).digest('hex');
     await store.lock(lock,async()=>store.atomic(row.file,body));
     return NextResponse.json({success:true,id:row.id});
-  }catch{return NextResponse.json({error:'Notizbuch konnte nicht gespeichert werden'},{status:400});}
+  }catch(error){
+    // Distinguish "too large" so the client can tell the teacher what to do
+    if(error instanceof Error&&error.message==='Body limit')return NextResponse.json({error:'Notizbuch ist zu groß'},{status:413});
+    return NextResponse.json({error:'Notizbuch konnte nicht gespeichert werden'},{status:400});
+  }
 }
 export async function DELETE(_request:Request,{params}:{params:Promise<{id:string}>}){
   try {

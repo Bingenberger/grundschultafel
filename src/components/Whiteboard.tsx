@@ -359,6 +359,28 @@ function TimerOverlay({ timer, activeTool, isSelected }: { timer: TimerRect, act
   );
 }
 
+// Large photos (e.g. from the phone upload) are stored inside the notebook as data URLs.
+// Downscale them on insertion so notebooks stay well below the server's size limit.
+const MAX_IMAGE_DIMENSION = 1600;
+const MAX_UNSCALED_DATA_URL_LENGTH = 700_000;
+async function shrinkImageDataUrl(dataUrl: string): Promise<string> {
+  const mime = /^data:(image\/(?:jpeg|png|webp));base64,/.exec(dataUrl)?.[1];
+  if (!mime) return dataUrl; // keep SVG/GIF etc. untouched
+  const img = new Image();
+  img.src = dataUrl;
+  await img.decode();
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  if (longest <= MAX_IMAGE_DIMENSION && dataUrl.length <= MAX_UNSCALED_DATA_URL_LENGTH) return dataUrl;
+  const scale = Math.min(1, MAX_IMAGE_DIMENSION / longest);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height);
+  // PNG keeps transparency; photos are re-encoded as JPEG/WebP
+  const shrunk = mime === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL(mime, 0.85);
+  return shrunk.length < dataUrl.length ? shrunk : dataUrl;
+}
+
 // Custom object properties that must survive serialisation (saving, undo, page switch).
 // Fabric >= 6 ignores arguments to canvas.toJSON(); custom properties are only
 // serialised when registered globally via FabricObject.customProperties.
@@ -386,8 +408,7 @@ export default function Whiteboard() {
 
   const pushToHistory = (pageId: string, json: any) => {
     // Every history snapshot is also the latest page state; keep the store in sync so
-    // saving a notebook includes objects that were added without an explicit save call
-    // (YouTube videos, timers, backgrounds, …).
+    // saving a notebook includes everything that is on the canvas.
     useWhiteboardStore.getState().updatePageData(pageId, json);
     const hist = getPageHistory(pageId);
     if (hist.index < hist.stack.length - 1) {
@@ -400,6 +421,97 @@ export default function Whiteboard() {
     store.setCanUndo(hist.index > 0);
     store.setCanRedo(false);
   };
+
+  // --- Central commit: the only place that turns canvas changes into a history entry
+  // and a page-store update. Fabric events mark the canvas dirty; changes that fire no
+  // event (background image, text formatting, coordinates set while drawing) call
+  // commitCanvas(true).
+  const fabricRef = useRef<fabric.Canvas | null>(null);
+  const isDirty = useRef(false);
+
+  const cancelScheduledCommit = () => {
+    if (historyDebounceTimer.current) {
+      clearTimeout(historyDebounceTimer.current);
+      historyDebounceTimer.current = null;
+    }
+  };
+
+  const commitCanvas = (force = false) => {
+    const canvas = fabricRef.current;
+    if (!canvas || isHistoryLocked.current) return;
+    if (!force && !isDirty.current) return;
+    cancelScheduledCommit();
+    isDirty.current = false;
+    pushToHistory(currentPageIdRef.current, canvas.toJSON());
+  };
+
+  const scheduleCommit = () => {
+    if (isHistoryLocked.current) return;
+    isDirty.current = true;
+    cancelScheduledCommit();
+    historyDebounceTimer.current = setTimeout(() => {
+      historyDebounceTimer.current = null;
+      commitCanvas();
+    }, 80);
+  };
+
+  // Canvas-replacing operations (page load, undo/redo, clearing a new page) run one after
+  // another through this queue. While any is queued or running, the history is locked so
+  // their canvas events never produce commits, and the canvas is never captured half-loaded.
+  const canvasOpQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const handledUndoSignal = useRef(useWhiteboardStore.getState().undoSignal);
+  const handledRedoSignal = useRef(useWhiteboardStore.getState().redoSignal);
+  const lockDepth = useRef(0);
+  const pageLoadSeq = useRef(0);
+  const runLocked = (fn: () => unknown): Promise<void> => {
+    cancelScheduledCommit();
+    isDirty.current = false;
+    lockDepth.current++;
+    isHistoryLocked.current = true;
+    const run = canvasOpQueue.current
+      .then(() => fn())
+      .then(() => undefined)
+      .finally(() => {
+        lockDepth.current--;
+        isHistoryLocked.current = lockDepth.current > 0;
+      });
+    canvasOpQueue.current = run.catch(() => undefined);
+    return run;
+  };
+
+  // Used by "Speichern": make sure the store holds exactly what the canvas shows,
+  // including pending debounced changes and text that is still being edited.
+  const flushCanvasToStore = () => {
+    const canvas = fabricRef.current;
+    if (!canvas || isHistoryLocked.current) return;
+    if (isDirty.current) {
+      commitCanvas();
+    } else {
+      useWhiteboardStore.getState().updatePageData(currentPageIdRef.current, canvas.toJSON());
+    }
+  };
+
+  // Re-apply runtime-only object state that Fabric does not serialise
+  // (custom controls, interaction flags). Called after every loadFromJSON.
+  const restoreLoadedObjects = (canvas: fabric.Canvas) => {
+    canvas.getObjects().forEach((obj) => {
+      if (isTextObject(obj)) {
+        obj.controls = createTextControls((target, c) => {
+          c.remove(target);
+          c.requestRenderAll();
+          setSelectedTextParams(null);
+        });
+        obj.set({
+          lockScalingFlip: true,
+          minWidth: obj.minWidth || 120,
+        });
+      }
+      if ((obj as any).isFill) {
+        obj.set({ selectable: false, evented: false });
+      }
+    });
+  };
+
   const [youtubeVideos, setYoutubeVideos] = useState<YoutubeRect[]>([]);
   const [timers, setTimers] = useState<TimerRect[]>([]);
   const [selectedTimerId, setSelectedTimerId] = useState<string | null>(null);
@@ -652,42 +764,35 @@ export default function Whiteboard() {
     currentPageIdRef.current = currentPageId;
   }, [currentPageId]);
 
-  // Listen to Fabric events and push canvas snapshots into the history stack
+  // Give the store access to the canvas flush so "Speichern" always saves the live state
+  useEffect(() => {
+    fabricRef.current = fabricCanvas;
+    if (!fabricCanvas) return;
+    useWhiteboardStore.getState().setCanvasFlush(flushCanvasToStore);
+    return () => {
+      cancelScheduledCommit();
+      useWhiteboardStore.getState().setCanvasFlush(null);
+    };
+  }, [fabricCanvas]);
+
+  // Listen to Fabric events and commit canvas snapshots (history + page store)
   useEffect(() => {
     if (!fabricCanvas) return;
 
-    const schedulePush = () => {
-      if (historyDebounceTimer.current) clearTimeout(historyDebounceTimer.current);
-      historyDebounceTimer.current = setTimeout(() => {
-        historyDebounceTimer.current = null;
-        if (isHistoryLocked.current || !fabricCanvas) return;
-        const json = fabricCanvas.toJSON();
-        pushToHistory(currentPageIdRef.current, json);
-      }, 80);
-    };
-
-    const onPathCreated = () => {
+    const commitNow = () => {
       if (isHistoryLocked.current) return;
-      const json = fabricCanvas.toJSON();
-      pushToHistory(currentPageIdRef.current, json);
-    };
-
-    const onObjectModified = () => {
-      if (isHistoryLocked.current) return;
-      const json = fabricCanvas.toJSON();
-      pushToHistory(currentPageIdRef.current, json);
+      isDirty.current = true;
+      commitCanvas();
     };
 
     const onObjectAdded = (e: any) => {
-      if (isHistoryLocked.current) return;
       if (e.target?.type === 'path') return; // path:created handles this
-      schedulePush();
+      scheduleCommit();
     };
 
-    const onObjectRemoved = () => {
-      if (isHistoryLocked.current) return;
-      schedulePush();
-    };
+    const onPathCreated = commitNow;
+    const onObjectModified = commitNow;
+    const onObjectRemoved = scheduleCommit;
 
     fabricCanvas.on('path:created', onPathCreated);
     fabricCanvas.on('object:modified', onObjectModified);
@@ -724,38 +829,46 @@ export default function Whiteboard() {
 
   // Undo: restore previous history entry
   useEffect(() => {
-    if (!fabricCanvas || undoSignal === 0) return;
+    // Only react to a new signal, not to page switches re-running this effect
+    if (!fabricCanvas || undoSignal === handledUndoSignal.current) return;
+    handledUndoSignal.current = undoSignal;
+    commitCanvas(); // a change still waiting in the debounce belongs to the history first
     const hist = getPageHistory(currentPageId);
     if (hist.index <= 0) return;
     hist.index--;
     const json = hist.stack[hist.index];
-    isHistoryLocked.current = true;
-    void (fabricCanvas as any).loadFromJSON(json).then(() => {
+    void runLocked(async () => {
+      await fabricCanvas.loadFromJSON(json);
+      restoreLoadedObjects(fabricCanvas);
       fabricCanvas.requestRenderAll();
+    }).then(() => {
       useWhiteboardStore.getState().updatePageData(currentPageId, json);
-      isHistoryLocked.current = false;
       const store = useWhiteboardStore.getState();
       store.setCanUndo(hist.index > 0);
       store.setCanRedo(hist.index < hist.stack.length - 1);
-    });
+    }).catch((error) => console.error('Fehler beim Wiederherstellen aus dem Verlauf:', error));
   }, [undoSignal, fabricCanvas, currentPageId]);
 
   // Redo: restore next history entry
   useEffect(() => {
-    if (!fabricCanvas || redoSignal === 0) return;
+    // Only react to a new signal, not to page switches re-running this effect
+    if (!fabricCanvas || redoSignal === handledRedoSignal.current) return;
+    handledRedoSignal.current = redoSignal;
+    commitCanvas(); // a change still waiting in the debounce belongs to the history first
     const hist = getPageHistory(currentPageId);
     if (hist.index >= hist.stack.length - 1) return;
     hist.index++;
     const json = hist.stack[hist.index];
-    isHistoryLocked.current = true;
-    void (fabricCanvas as any).loadFromJSON(json).then(() => {
+    void runLocked(async () => {
+      await fabricCanvas.loadFromJSON(json);
+      restoreLoadedObjects(fabricCanvas);
       fabricCanvas.requestRenderAll();
+    }).then(() => {
       useWhiteboardStore.getState().updatePageData(currentPageId, json);
-      isHistoryLocked.current = false;
       const store = useWhiteboardStore.getState();
       store.setCanUndo(hist.index > 0);
       store.setCanRedo(hist.index < hist.stack.length - 1);
-    });
+    }).catch((error) => console.error('Fehler beim Wiederherstellen aus dem Verlauf:', error));
   }, [redoSignal, fabricCanvas, currentPageId]);
 
   useEffect(() => {
@@ -889,16 +1002,14 @@ export default function Whiteboard() {
           fabricCanvas.add(img);
           fabricCanvas.sendObjectToBack(img);
           fabricCanvas.requestRenderAll();
-          const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, fabricCanvas.toJSON());
+          commitCanvas();
         });
       } else if (activeTool === 'text') {
         const pointer = options.scenePoint || options.pointer || { x: 100, y: 100 };
         const onDeleteText = (target: fabric.Object, canvas: fabric.Canvas) => {
           canvas.remove(target);
           canvas.requestRenderAll();
-          const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, canvas.toJSON());
+          commitCanvas();
           setSelectedTextParams(null);
         };
 
@@ -947,8 +1058,7 @@ export default function Whiteboard() {
         const handleEditingExited = (event: any) => {
           if (event.target !== textObject) return;
           fabricCanvas.off('text:editing:exited', handleEditingExited);
-          const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, fabricCanvas.toJSON());
+          commitCanvas();
           setActiveTool('move');
         };
 
@@ -1056,6 +1166,7 @@ export default function Whiteboard() {
       fabricCanvas.clear();
       fabricCanvas.backgroundColor = '#ffffff';
       fabricCanvas.renderAll();
+      commitCanvas(true);
     }
   }, [clearCanvasSignal, fabricCanvas]);
 
@@ -1086,6 +1197,9 @@ export default function Whiteboard() {
         } catch (e) {
           console.warn('[Whiteboard] Data-URL-Konvertierung fehlgeschlagen, benutze Original-URL:', e);
         }
+      }
+      if (imageUrl.startsWith('data:')) {
+        imageUrl = await shrinkImageDataUrl(imageUrl).catch(() => imageUrl);
       }
 
       fabric.Image.fromURL(imageUrl).then((img) => {
@@ -1119,8 +1233,7 @@ export default function Whiteboard() {
             if (canvas) {
               canvas.remove(target);
               canvas.requestRenderAll();
-              const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-              updatePageData(currentPageId, canvas.toJSON());
+              commitCanvas();
             }
             return true;
           },
@@ -1159,9 +1272,7 @@ export default function Whiteboard() {
           canvas.setActiveObject(img);
         }
         canvas.renderAll();
-        const { updatePageData: upd, currentPageId: pid } = useWhiteboardStore.getState();
-        const canvasJson = canvas.toJSON();
-        upd(pid, canvasJson);
+        commitCanvas();
         consumeNewImage();
 
         if (!isRsImageInsertion) {
@@ -1231,8 +1342,7 @@ export default function Whiteboard() {
           if (canvas) {
             canvas.remove(target);
             canvas.requestRenderAll();
-            const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, canvas.toJSON());
+            commitCanvas();
           }
           return true;
         },
@@ -1321,8 +1431,7 @@ export default function Whiteboard() {
           if (canvas) {
             canvas.remove(target);
             canvas.requestRenderAll();
-            const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, canvas.toJSON());
+            commitCanvas();
           }
           return true;
         },
@@ -1394,8 +1503,7 @@ export default function Whiteboard() {
           if (canvas) {
             canvas.remove(target);
             canvas.requestRenderAll();
-            const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-            updatePageData(currentPageId, canvas.toJSON());
+            commitCanvas();
           }
           return true;
         };
@@ -1430,8 +1538,7 @@ export default function Whiteboard() {
         fabricCanvas.renderAll();
         
         // Save state immediately
-        const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-        updatePageData(currentPageId, fabricCanvas.toJSON());
+        commitCanvas();
       }
 
       consumeNewShape();
@@ -1520,8 +1627,7 @@ export default function Whiteboard() {
         deleteControl: createSmallDeleteControl((target, canvas) => {
           canvas.remove(target);
           canvas.requestRenderAll();
-          const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-          updatePageData(currentPageId, canvas.toJSON());
+          commitCanvas();
         })
       };
       // --- End Delete Control ---
@@ -1530,8 +1636,7 @@ export default function Whiteboard() {
       fabricCanvas.setActiveObject(rulerGroup);
       fabricCanvas.renderAll();
       
-      const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-      updatePageData(currentPageId, fabricCanvas.toJSON());
+      commitCanvas();
 
       consumeNewRuler();
       useWhiteboardStore.getState().setActiveTool('move');
@@ -1555,7 +1660,8 @@ export default function Whiteboard() {
         
         fabricCanvas.backgroundImage = img;
         fabricCanvas.renderAll();
-        
+        commitCanvas(true); // background changes fire no Fabric event
+
         consumeNewBackground();
       });
     }
@@ -1580,62 +1686,51 @@ export default function Whiteboard() {
       useWhiteboardStore.getState().setCanRedo(false);
     }
 
-    // Save old page state only when switching pages within the same notebook
-    if (pageChanged) {
-      const oldJson: any = fabricCanvas.toJSON();
-      updatePageData(prevPageId.current, oldJson);
+    // Save the old page only when switching pages within the same notebook. When a
+    // notebook was (re)loaded, the canvas still shows the discarded state and must not
+    // overwrite the freshly loaded pages.
+    // While an earlier load is still pending the canvas does not show the old page yet;
+    // the old page's stored data is then still current (nothing can change while locked).
+    if (pageChanged && !notebookLoaded && lockDepth.current === 0) {
+      updatePageData(prevPageId.current, fabricCanvas.toJSON());
     }
+    // Pending changes belong to the old page / old notebook; never commit them to the new one.
+    cancelScheduledCommit();
+    isDirty.current = false;
+
+    const setBaseline = (pageId: string) => {
+      const hist = getPageHistory(pageId);
+      if (hist.index === -1) {
+        hist.stack = [fabricCanvas.toJSON()];
+        hist.index = 0;
+      }
+      const store = useWhiteboardStore.getState();
+      store.setCanUndo(hist.index > 0);
+      store.setCanRedo(hist.index < hist.stack.length - 1);
+    };
 
     const newPage = pages.find(p => p.id === currentPageId);
+    const targetPageId = currentPageId;
+    const seq = ++pageLoadSeq.current;
+    const isStale = () => seq !== pageLoadSeq.current; // a newer page switch superseded this one
     if (newPage?.canvasData) {
-      isHistoryLocked.current = true;
-      void fabricCanvas
-        .loadFromJSON(newPage.canvasData)
-        .then(() => {
-          fabricCanvas.getObjects().forEach((obj) => {
-            if (isTextObject(obj)) {
-              obj.controls = createTextControls((target, canvas) => {
-                canvas.remove(target);
-                canvas.requestRenderAll();
-                const { updatePageData, currentPageId } = useWhiteboardStore.getState();
-                updatePageData(currentPageId, canvas.toJSON());
-                setSelectedTextParams(null);
-              });
-              obj.set({
-                lockScalingFlip: true,
-                minWidth: obj.minWidth || 120,
-              });
-            }
-          });
-          fabricCanvas.requestRenderAll();
-          isHistoryLocked.current = false;
-          // Baseline entry so the user can undo back to the loaded state
-          const hist = getPageHistory(currentPageId);
-          if (hist.index === -1) {
-            const json = fabricCanvas.toJSON();
-            hist.stack = [json];
-            hist.index = 0;
-            useWhiteboardStore.getState().setCanUndo(false);
-            useWhiteboardStore.getState().setCanRedo(false);
-          }
-        })
+      void runLocked(async () => {
+        if (isStale()) return;
+        await fabricCanvas.loadFromJSON(newPage.canvasData);
+        restoreLoadedObjects(fabricCanvas);
+        fabricCanvas.requestRenderAll();
+      })
+        .then(() => { if (!isStale()) setBaseline(targetPageId); })
         .catch((error) => {
-          isHistoryLocked.current = false;
           console.error('Fehler beim Laden des Canvas-JSON:', error);
         });
     } else {
-      fabricCanvas.clear();
-      fabricCanvas.backgroundColor = '#ffffff';
-      fabricCanvas.renderAll();
-      // Baseline: empty canvas
-      const hist = getPageHistory(currentPageId);
-      if (hist.index === -1) {
-        const json = fabricCanvas.toJSON();
-        hist.stack = [json];
-        hist.index = 0;
-        useWhiteboardStore.getState().setCanUndo(false);
-        useWhiteboardStore.getState().setCanRedo(false);
-      }
+      void runLocked(() => {
+        if (isStale()) return;
+        fabricCanvas.clear();
+        fabricCanvas.backgroundColor = '#ffffff';
+        fabricCanvas.renderAll();
+      }).then(() => { if (!isStale()) setBaseline(targetPageId); });
     }
 
     prevPageId.current = currentPageId;
@@ -1760,6 +1855,7 @@ export default function Whiteboard() {
           });
           (snapLine as any).isLockedStroke = true;
           fabricCanvas.add(snapLine);
+          cancelScheduledCommit(); // committed once the line is finished
         }
       } else if (activeTool === 'pen') {
         const ruler = fabricCanvas.getObjects().find(o => (o as any).isRuler);
@@ -1788,6 +1884,7 @@ export default function Whiteboard() {
             });
             (snapLine as any).isLockedStroke = true;
             fabricCanvas.add(snapLine);
+            cancelScheduledCommit(); // committed once the line is finished
           }
         }
 
@@ -1806,6 +1903,7 @@ export default function Whiteboard() {
             evented: false
           });
           fabricCanvas.add(snapLine);
+          cancelScheduledCommit(); // committed once the line is finished
         }
       }
     };
@@ -1846,22 +1944,22 @@ export default function Whiteboard() {
     const finishCurrentStroke = () => {
       if (isErasing) {
         isErasing = false;
-        // Save state after we're done erasing
-        const json: any = fabricCanvas.toJSON();
-        updatePageData(currentPageId, json);
+        // Commit once after erasing (removals/additions marked the canvas dirty)
+        commitCanvas();
       } else if (activeTool === 'rs' && rsStartPoint) {
         if (!rsPointerDownOnObject && !rsMoved) {
           if (snapLine) {
             fabricCanvas.remove(snapLine);
+            // the temporary line was added and removed again: nothing to commit
+            cancelScheduledCommit();
+            isDirty.current = false;
           }
           setRsPicker({ left: rsStartPoint.x, top: rsStartPoint.y });
         } else if (!rsPointerDownOnObject && isDrawingRs && snapLine) {
           snapLine.setCoords();
-          const json: any = fabricCanvas.toJSON();
-          updatePageData(currentPageId, json);
+          commitCanvas(true);
         } else if (rsPointerDownOnObject && rsMoved) {
-          const json: any = fabricCanvas.toJSON();
-          updatePageData(currentPageId, json);
+          commitCanvas(); // the drag itself fired object:modified
         }
         snapLine = null;
         isDrawingRs = false;
@@ -1877,16 +1975,14 @@ export default function Whiteboard() {
         // Only restore freehand if not in straight line mode
         fabricCanvas.isDrawingMode = !useWhiteboardStore.getState().isStraightLineMode;
         
-        const json: any = fabricCanvas.toJSON();
-        updatePageData(currentPageId, json);
+        commitCanvas(true);
       } else if (isDrawingStraight) {
         isDrawingStraight = false;
         if (snapLine) snapLine.setCoords();
         snapLine = null;
         activeRuler = null;
         
-        const json: any = fabricCanvas.toJSON();
-        updatePageData(currentPageId, json);
+        commitCanvas(true);
       }
     };
 
@@ -1898,23 +1994,10 @@ export default function Whiteboard() {
       finishCurrentStroke();
     };
 
-    const saveStateForPath = () => {
-      if ((activeTool === 'pen' || activeTool === 'rs') && !isSnapping && !isDrawingStraight && !isDrawingRs) {
-        const json: any = fabricCanvas.toJSON();
-        updatePageData(currentPageId, json);
-      }
-    };
-
-    const saveStateForModified = () => {
-      const json: any = fabricCanvas.toJSON();
-      updatePageData(currentPageId, json);
-    };
 
     fabricCanvas.on('mouse:down', onMouseDown);
     fabricCanvas.on('mouse:move', onMouseMove);
     fabricCanvas.on('mouse:up', onMouseUp);
-    fabricCanvas.on('path:created', saveStateForPath);
-    fabricCanvas.on('object:modified', saveStateForModified);
     window.addEventListener('pointerup', onPointerReleasedOutsideCanvas);
     window.addEventListener('pointercancel', onPointerReleasedOutsideCanvas);
     window.addEventListener('mouseup', onPointerReleasedOutsideCanvas);
@@ -1924,8 +2007,6 @@ export default function Whiteboard() {
       fabricCanvas.off('mouse:down', onMouseDown);
       fabricCanvas.off('mouse:move', onMouseMove);
       fabricCanvas.off('mouse:up', onMouseUp);
-      fabricCanvas.off('path:created', saveStateForPath);
-      fabricCanvas.off('object:modified', saveStateForModified);
       window.removeEventListener('pointerup', onPointerReleasedOutsideCanvas);
       window.removeEventListener('pointercancel', onPointerReleasedOutsideCanvas);
       window.removeEventListener('mouseup', onPointerReleasedOutsideCanvas);
@@ -2064,6 +2145,7 @@ export default function Whiteboard() {
     }
     
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, isBold: !currentIsBold });
   };
 
@@ -2090,6 +2172,7 @@ export default function Whiteboard() {
     }
 
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, isItalic: !currentIsItalic });
   };
 
@@ -2114,6 +2197,7 @@ export default function Whiteboard() {
     }
 
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, isUnderline: !currentIsUnderline });
   };
 
@@ -2138,6 +2222,7 @@ export default function Whiteboard() {
     }
 
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, isLinethrough: !currentIsLinethrough });
   };
 
@@ -2169,6 +2254,7 @@ export default function Whiteboard() {
     textObj.initDimensions();
 
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, fontSize: newSize });
   };
 
@@ -2177,6 +2263,7 @@ export default function Whiteboard() {
     selectedTextParams.obj.set({ textAlign: alignment });
     selectedTextParams.obj.initDimensions();
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, textAlign: alignment });
   };
 
@@ -2186,6 +2273,7 @@ export default function Whiteboard() {
     selectedTextParams.obj.set({ lineHeight: nextLineHeight });
     selectedTextParams.obj.initDimensions();
     fabricCanvas?.renderAll();
+    commitCanvas(true); // style changes fire no Fabric event
     setSelectedTextParams({ ...selectedTextParams, lineHeight: nextLineHeight });
   };
   return (

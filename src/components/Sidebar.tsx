@@ -1,7 +1,7 @@
 'use client';
 
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Save, FolderOpen, ChevronUp, ChevronDown, Plus, X, FilePlus, Pen, Trash2, LogOut, ShieldAlert, List } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { useRouter } from 'next/navigation';
@@ -11,7 +11,7 @@ export default function Sidebar() {
     notebookId, notebookName, pages, currentPageId, 
     setNotebook, loadNotebookState, switchPage, addPage,
     resetNotebook, renameNotebook,
-    isJournalOpen, toggleJournal, journalImages
+    isJournalOpen, toggleJournal
   } = useWhiteboardStore();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -20,6 +20,23 @@ export default function Sidebar() {
   const [notebookToDelete, setNotebookToDelete] = useState<{id: string, name: string} | null>(null);
   const [notebooks, setNotebooks] = useState<{ id: string, name: string, updatedAt: string }[]>([]);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showSaveStatus = (status: { kind: 'ok' | 'error'; text: string }) => {
+    if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+    setSaveStatus(status);
+    // Success fades out; errors stay until dismissed so they cannot be missed
+    if (status.kind === 'ok') saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 2000);
+  };
+  const saveErrorText = (status: number) => {
+    if (status === 401 || status === 403) {
+      return 'Nicht gespeichert: Deine Anmeldung ist abgelaufen. Bitte in einem neuen Tab anmelden (diesen Tab offen lassen!) und dann hier erneut speichern.';
+    }
+    if (status === 413) {
+      return 'Nicht gespeichert: Das Heft ist zu groß (zu viele oder zu große Bilder). Bitte Bilder entfernen oder auf mehrere Hefte verteilen.';
+    }
+    return `Nicht gespeichert (Fehler ${status}). Bitte erneut versuchen.`;
+  };
   const [user, setUser] = useState<{username: string, role: string} | null>(null);
   const router = useRouter();
 
@@ -63,7 +80,8 @@ export default function Sidebar() {
     }
 
     try {
-      // Read the freshest state at click time (not the value captured at render)
+      // Write the live canvas into the store first, then read the freshest state
+      useWhiteboardStore.getState().canvasFlush?.();
       const { pages, journalImages } = useWhiteboardStore.getState();
       const payload = { name, pages, journalImages };
       console.log('[Save] Speichere Heft, Seiten:', pages.length, '– Objekte pro Seite:', pages.map(p => (p.canvasData as any)?.objects?.length ?? 'kein canvasData'));
@@ -73,8 +91,14 @@ export default function Sidebar() {
         body: JSON.stringify(payload)
       });
       console.log('[Save] Server-Antwort:', res.status, res.ok ? 'OK' : 'FEHLER');
+      if (res.ok) {
+        showSaveStatus({ kind: 'ok', text: 'Gespeichert' });
+      } else {
+        showSaveStatus({ kind: 'error', text: saveErrorText(res.status) });
+      }
     } catch (e) {
       console.error('Fehler beim Speichern!', e);
+      showSaveStatus({ kind: 'error', text: 'Nicht gespeichert: Der Server ist nicht erreichbar. Bitte Verbindung prüfen und erneut speichern.' });
     } finally {
       setSaving(false);
     }
@@ -519,6 +543,22 @@ export default function Sidebar() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {saveStatus && (
+        <div
+          role={saveStatus.kind === 'error' ? 'alert' : 'status'}
+          onClick={() => setSaveStatus(null)}
+          title="Schließen"
+          style={{
+            position: 'fixed', left: '50%', bottom: '24px', transform: 'translateX(-50%)',
+            maxWidth: 'min(560px, calc(100vw - 32px))', padding: '12px 18px', borderRadius: '10px',
+            background: saveStatus.kind === 'error' ? 'var(--danger)' : 'var(--primary)', color: 'white',
+            fontWeight: 600, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 10000, cursor: 'pointer'
+          }}
+        >
+          {saveStatus.text}
         </div>
       )}
     </div>

@@ -75,6 +75,9 @@ interface WhiteboardState {
   switchPage: (id: string) => void;
   deletePage: (id: string) => void;
   updatePageData: (id: string, canvasData: any) => void;
+  // Registered by the Whiteboard: writes the live canvas into the current page before saving
+  canvasFlush: (() => void) | null;
+  setCanvasFlush: (fn: (() => void) | null) => void;
   
   // Persistence
   notebookId: string | null;
@@ -187,6 +190,9 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
       pages: state.pages.map(p => p.id === id ? { ...p, canvasData: data } : p)
     }));
   },
+
+  canvasFlush: null,
+  setCanvasFlush: (fn) => set({ canvasFlush: fn }),
 
   notebookId: null,
   notebookName: null,
