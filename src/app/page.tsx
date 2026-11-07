@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Toolbar from '@/components/Toolbar';
 import Sidebar from '@/components/Sidebar';
 import JournalSidebar from '@/components/JournalSidebar';
+import ClassroomTools from '@/components/ClassroomTools';
 
 const Whiteboard = dynamic(() => import('@/components/Whiteboard'), {
   ssr: false,
@@ -22,6 +23,7 @@ export default function Home() {
         <JournalSidebar />
         <div style={{ flex: 1, position: 'relative' }}>
           <Whiteboard />
+          <ClassroomTools />
           <Toolbar />
         </div>
       </main>

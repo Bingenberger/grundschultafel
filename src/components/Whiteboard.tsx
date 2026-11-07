@@ -5,6 +5,8 @@ import * as fabric from 'fabric';
 import { useWhiteboardStore, ToolType } from '@/store/useWhiteboardStore';
 import { Play, Pause, RotateCcw, Eye, EyeOff, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, Rows3 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
+import { BACKGROUND_TEMPLATES } from '@/lib/backgroundTemplates';
+import { createMathItems, handleMathTap, toLocal, LearningClock, snapCounterToFields, piecesOnField, isRotatablePiece } from '@/lib/mathManipulatives';
 
 interface YoutubeRect {
   id: string; // The fabric object ID or reference
@@ -381,10 +383,22 @@ async function shrinkImageDataUrl(dataUrl: string): Promise<string> {
   return shrunk.length < dataUrl.length ? shrunk : dataUrl;
 }
 
+// Overlays (videos, timers, text toolbar) are HTML positioned over the canvas, so they need
+// an object's bounding box in screen pixels, i.e. after the zoom/pan viewport transform.
+function screenRect(obj: fabric.Object, canvas: fabric.Canvas) {
+  const b = obj.getBoundingRect();
+  const v = canvas.viewportTransform;
+  return { left: b.left * v[0] + v[4], top: b.top * v[3] + v[5], width: b.width * v[0], height: b.height * v[3] };
+}
+
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 4;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
 // Custom object properties that must survive serialisation (saving, undo, page switch).
 // Fabric >= 6 ignores arguments to canvas.toJSON(); custom properties are only
 // serialised when registered globally via FabricObject.customProperties.
-fabric.FabricObject.customProperties = ['id', 'youtubeId', 'timerType', 'url', 'isRuler', 'isLockedStroke', 'isFill'];
+fabric.FabricObject.customProperties = ['id', 'youtubeId', 'timerType', 'url', 'isRuler', 'isLockedStroke', 'isFill', 'mathKind', 'mathData'];
 
 export default function Whiteboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -427,13 +441,25 @@ export default function Whiteboard() {
   // event (background image, text formatting, coordinates set while drawing) call
   // commitCanvas(true).
   const fabricRef = useRef<fabric.Canvas | null>(null);
+  // New objects are placed in the middle of what is currently visible (zoom/pan aware)
+  const viewCenter = () => fabricRef.current?.getVpCenter() ?? { x: 400, y: 300 };
   const isDirty = useRef(false);
+
+  // Typing into a textbox fires no add/modify events until editing ends. The typed text is
+  // synced into the store (without a history entry) so autosave and "Speichern" see it.
+  const textUnsynced = useRef(false);
+  const textSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelScheduledCommit = () => {
     if (historyDebounceTimer.current) {
       clearTimeout(historyDebounceTimer.current);
       historyDebounceTimer.current = null;
     }
+    if (textSyncTimer.current) {
+      clearTimeout(textSyncTimer.current);
+      textSyncTimer.current = null;
+    }
+    textUnsynced.current = false;
   };
 
   const commitCanvas = (force = false) => {
@@ -486,7 +512,8 @@ export default function Whiteboard() {
     if (!canvas || isHistoryLocked.current) return;
     if (isDirty.current) {
       commitCanvas();
-    } else {
+    } else if (textUnsynced.current) {
+      cancelScheduledCommit();
       useWhiteboardStore.getState().updatePageData(currentPageIdRef.current, canvas.toJSON());
     }
   };
@@ -509,7 +536,127 @@ export default function Whiteboard() {
       if ((obj as any).isFill) {
         obj.set({ selectable: false, evented: false });
       }
+      if ((obj as any).mathKind) decorateMathObject(obj);
     });
+  };
+
+  // Maths material: delete and duplicate buttons everywhere; larger pieces can also be
+  // resized. Small pieces (counters, cards, cubes, coins) keep their size so sets stay consistent.
+  const decorateMathObject = (obj: fabric.Object) => {
+    const kind = (obj as any).mathKind as string;
+    const resizable = kind === 'field' || kind === 'abacus' || kind === 'clock' || (kind === 'money' && obj.width > 150);
+    const defaults = fabric.controlsUtils.createObjectDefaultControls();
+    obj.controls = {
+      ...(resizable ? { br: defaults.br } : {}),
+      ...(isRotatablePiece(obj) ? { rotate90Control: createRotate90Control() } : {}),
+      duplicateControl: createDuplicateControl(),
+      deleteControl: createSmallDeleteControl((target, c) => {
+        c.remove(target);
+        c.requestRenderAll();
+        commitCanvas();
+      }),
+    };
+    obj.set({ lockRotation: true, lockScalingFlip: true, lockSkewingX: true, lockSkewingY: true, padding: 4, transparentCorners: false, cornerColor: '#3b82f6', borderColor: '#3b82f6' });
+    obj.setCoords(); // control positions must be recomputed after replacing the controls
+  };
+
+  // Round button bottom-left: turns a Zehnerstange by 90° (free rotation stays locked)
+  const createRotate90Control = () => new fabric.Control({
+    x: -0.5,
+    y: 0.5,
+    offsetX: -12,
+    offsetY: 12,
+    cursorStyle: 'pointer',
+    sizeX: 28,
+    sizeY: 28,
+    mouseUpHandler: (_eventData: any, transform: any) => {
+      const target = transform.target as fabric.Object;
+      const canvas = target.canvas;
+      if (!canvas) return true;
+      target.rotate(((target.angle || 0) + 90) % 360);
+      target.setCoords();
+      canvas.requestRenderAll();
+      commitCanvas(true); // rotate() fires no Fabric event
+      return true;
+    },
+    render: (ctx: CanvasRenderingContext2D, left: number, top: number) => {
+      ctx.save();
+      ctx.translate(left, top);
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#7c3aed';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 6, -Math.PI * 0.9, Math.PI * 0.4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(2, 7); ctx.lineTo(6, 2); ctx.lineTo(7, 8);
+      ctx.stroke();
+      ctx.restore();
+    },
+  });
+
+  // Green "+" in the top-left corner: copies the piece (or the whole selection).
+  const createDuplicateControl = () => new fabric.Control({
+    x: -0.5,
+    y: -0.5,
+    offsetX: -12,
+    offsetY: -12,
+    cursorStyle: 'copy',
+    sizeX: 28,
+    sizeY: 28,
+    mouseUpHandler: (_eventData: any, transform: any) => {
+      void duplicateMath(transform.target as fabric.Object);
+      return true;
+    },
+    render: (ctx: CanvasRenderingContext2D, left: number, top: number) => {
+      ctx.save();
+      ctx.translate(left, top);
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#16a34a';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(-5, 0); ctx.lineTo(5, 0);
+      ctx.moveTo(0, -5); ctx.lineTo(0, 5);
+      ctx.stroke();
+      ctx.restore();
+    },
+  });
+
+  // A single piece is copied to its right (tapping again continues the row); a selection
+  // of several pieces is copied as a block underneath (10 counters → tap → 20 counters).
+  const duplicateMath = async (target: fabric.Object) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const isSelection = target instanceof fabric.ActiveSelection;
+    const originals = isSelection ? (target as fabric.ActiveSelection).getObjects() : [target];
+    const box = target.getBoundingRect();
+    // Leave the selection first, so the pieces report their own canvas positions again
+    if (isSelection) canvas.discardActiveObject();
+    const dx = isSelection ? 0 : box.width + 10;
+    const dy = isSelection ? box.height + 16 : 0;
+    const copies = await Promise.all(originals.map((o) => o.clone()));
+    copies.forEach((copy) => {
+      (copy as any).id = uuidv4();
+      copy.set({ left: copy.left + dx, top: copy.top + dy });
+      decorateMathObject(copy);
+      copy.setCoords();
+      canvas.add(copy);
+      if ((copy as any).mathKind === 'field') canvas.sendObjectToBack(copy);
+    });
+    if (copies.length === 1) {
+      canvas.setActiveObject(copies[0]);
+    } else {
+      const selection = new fabric.ActiveSelection(copies, { canvas });
+      canvas.setActiveObject(selection);
+    }
+    canvas.requestRenderAll();
+    commitCanvas();
   };
 
   const [youtubeVideos, setYoutubeVideos] = useState<YoutubeRect[]>([]);
@@ -617,6 +764,8 @@ export default function Whiteboard() {
     // Initialize fabric canvas
     const canvas = new fabric.Canvas(canvasRef.current, {
       isDrawingMode: true,
+      // Selecting an object must not lift it above others (e.g. a Zehnerfeld over its counters)
+      preserveObjectStacking: true,
       width: containerRef.current.clientWidth,
       height: containerRef.current.clientHeight,
       backgroundColor: 'transparent' // Let the container background show through if needed
@@ -724,7 +873,7 @@ export default function Whiteboard() {
       const rect = container.getBoundingClientRect();
       const x = e.e.clientX - rect.left;
       const y = e.e.clientY - rect.top;
-      const size = useWhiteboardStore.getState().eraserWidth;
+      const size = useWhiteboardStore.getState().eraserWidth * fabricCanvas.getZoom();
       cursor.style.left = (x - size / 2) + 'px';
       cursor.style.top = (y - size / 2) + 'px';
       cursor.style.width = size + 'px';
@@ -775,6 +924,108 @@ export default function Whiteboard() {
     };
   }, [fabricCanvas]);
 
+  // --- Zoom & pan ------------------------------------------------------------------
+  // Touch boards: two fingers zoom and move the board. Desktop: Ctrl + mouse wheel (or a
+  // trackpad pinch) zooms, the plain wheel moves. The view is not part of the notebook.
+  const [viewport, setViewport] = useState({ zoom: 1, moved: false });
+  const applyViewport = (vpt: fabric.TMat2D) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    canvas.setViewportTransform(vpt);
+    canvas.requestRenderAll();
+    setViewport({ zoom: vpt[0], moved: vpt[0] !== 1 || vpt[4] !== 0 || vpt[5] !== 0 });
+  };
+  const resetViewport = () => applyViewport([1, 0, 0, 1, 0, 0]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!fabricCanvas || !container) return;
+    const c = fabricCanvas as any;
+
+    let pinch: { dist: number; mid: { x: number; y: number }; vpt: fabric.TMat2D } | null = null;
+    let suppress = false; // swallow the remaining finger(s) of a pinch until all are lifted
+
+    const local = (t: Touch) => {
+      const r = container.getBoundingClientRect();
+      return { x: t.clientX - r.left, y: t.clientY - r.top };
+    };
+    const measure = (touches: TouchList) => {
+      const a = local(touches[0]);
+      const b = local(touches[1]);
+      return { dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    };
+    // The first finger already started a stroke/move/selection in Fabric: abandon it
+    const cancelFabricGesture = () => {
+      if (c._isCurrentlyDrawing) {
+        c._isCurrentlyDrawing = false;
+        c.freeDrawingBrush?._reset?.();
+        c.clearContext(c.contextTop);
+      }
+      c._currentTransform = null;
+      c._groupSelector = null;
+      fabricCanvas.requestRenderAll();
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length >= 2) {
+        if (!pinch) {
+          cancelFabricGesture();
+          const { dist, mid } = measure(e.touches);
+          pinch = { dist, mid, vpt: [...fabricCanvas.viewportTransform] as fabric.TMat2D };
+        }
+        suppress = true;
+      }
+      if (suppress) { e.stopPropagation(); e.preventDefault(); }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!suppress) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (!pinch || e.touches.length < 2) return;
+      const { dist, mid } = measure(e.touches);
+      const z0 = pinch.vpt[0];
+      const zoom = clampZoom(z0 * dist / pinch.dist);
+      // keep the scene point that was under the fingers' midpoint under the new midpoint
+      const sx = (pinch.mid.x - pinch.vpt[4]) / z0;
+      const sy = (pinch.mid.y - pinch.vpt[5]) / z0;
+      applyViewport([zoom, 0, 0, zoom, mid.x - sx * zoom, mid.y - sy * zoom]);
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!suppress) return;
+      e.stopPropagation();
+      if (e.touches.length < 2) pinch = null;
+      if (e.touches.length === 0) suppress = false;
+    };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const vpt = [...fabricCanvas.viewportTransform] as fabric.TMat2D;
+      if (e.ctrlKey || e.metaKey) {
+        const r = container.getBoundingClientRect();
+        const point = { x: e.clientX - r.left, y: e.clientY - r.top };
+        const zoom = clampZoom(vpt[0] * Math.pow(0.998, e.deltaY));
+        const sx = (point.x - vpt[4]) / vpt[0];
+        const sy = (point.y - vpt[5]) / vpt[3];
+        applyViewport([zoom, 0, 0, zoom, point.x - sx * zoom, point.y - sy * zoom]);
+      } else {
+        applyViewport([vpt[0], 0, 0, vpt[3], vpt[4] - e.deltaX, vpt[5] - e.deltaY]);
+      }
+    };
+
+    const capture = { capture: true, passive: false } as const;
+    container.addEventListener('touchstart', onTouchStart, capture);
+    container.addEventListener('touchmove', onTouchMove, capture);
+    container.addEventListener('touchend', onTouchEnd, capture);
+    container.addEventListener('touchcancel', onTouchEnd, capture);
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart, capture);
+      container.removeEventListener('touchmove', onTouchMove, capture);
+      container.removeEventListener('touchend', onTouchEnd, capture);
+      container.removeEventListener('touchcancel', onTouchEnd, capture);
+      container.removeEventListener('wheel', onWheel);
+    };
+  }, [fabricCanvas]);
+
   // Listen to Fabric events and commit canvas snapshots (history + page store)
   useEffect(() => {
     if (!fabricCanvas) return;
@@ -799,7 +1050,19 @@ export default function Whiteboard() {
     fabricCanvas.on('object:added', onObjectAdded);
     fabricCanvas.on('object:removed', onObjectRemoved);
 
+    const onTextChanged = () => {
+      if (isHistoryLocked.current) return;
+      textUnsynced.current = true;
+      if (textSyncTimer.current) clearTimeout(textSyncTimer.current);
+      textSyncTimer.current = setTimeout(() => {
+        textSyncTimer.current = null;
+        flushCanvasToStore();
+      }, 800);
+    };
+    fabricCanvas.on('text:changed', onTextChanged);
+
     return () => {
+      fabricCanvas.off('text:changed', onTextChanged);
       fabricCanvas.off('path:created', onPathCreated);
       fabricCanvas.off('object:modified', onObjectModified);
       fabricCanvas.off('object:added', onObjectAdded);
@@ -1038,7 +1301,7 @@ export default function Whiteboard() {
           textObject.enterEditing();
           textObject.hiddenTextarea?.focus();
           textObject.selectAll();
-          const boundingRect = textObject.getBoundingRect();
+          const boundingRect = screenRect(textObject, fabricCanvas);
           setSelectedTextParams({
             obj: textObject,
             top: boundingRect.top - 60,
@@ -1067,7 +1330,7 @@ export default function Whiteboard() {
     };
 
     const updateTextToolbarPosition = (obj: fabric.Textbox) => {
-      const boundingRect = obj.getBoundingRect();
+      const boundingRect = screenRect(obj, fabricCanvas);
         setSelectedTextParams({
           obj,
           top: boundingRect.top - 60, // Above the text
@@ -1246,8 +1509,8 @@ export default function Whiteboard() {
           }
         });
 
-        const targetLeft = pendingImage.left ?? canvasWidth / 2;
-        const targetTop = pendingImage.top ?? canvasHeight / 2;
+        const targetLeft = pendingImage.left ?? viewCenter().x;
+        const targetTop = pendingImage.top ?? viewCenter().y;
         const isRsImageInsertion = useWhiteboardStore.getState().activeTool === 'rs' && pendingImage.left !== undefined && pendingImage.top !== undefined;
         const rsTargetSize = 36;
 
@@ -1302,8 +1565,8 @@ export default function Whiteboard() {
       const canvasHeight = fabricCanvas.height || 600;
 
       const rect = new fabric.Rect({
-        left: canvasWidth / 2 - 280,
-        top: canvasHeight / 2 - 157.5,
+        left: viewCenter().x - 280,
+        top: viewCenter().y - 157.5,
         width: 560,
         height: 315,
         fill: 'transparent',
@@ -1391,8 +1654,8 @@ export default function Whiteboard() {
       const canvasHeight = fabricCanvas.height || 600;
 
       const rect = new fabric.Rect({
-        left: canvasWidth / 2 - timerWidth / 2,
-        top: canvasHeight / 2 - timerHeight / 2,
+        left: viewCenter().x - timerWidth / 2,
+        top: viewCenter().y - timerHeight / 2,
         width: timerWidth,
         height: timerHeight,
         fill: 'transparent',
@@ -1465,8 +1728,8 @@ export default function Whiteboard() {
       
       let shapeObj: fabric.Object | null = null;
       const commonProps = {
-        left: canvasWidth / 2 - 50,
-        top: canvasHeight / 2 - 50,
+        left: viewCenter().x - 50,
+        top: viewCenter().y - 50,
         fill: shapeFilled ? shapeFillColor : 'transparent',
         stroke: shapeStrokeColor,
         strokeWidth: 4,
@@ -1482,8 +1745,8 @@ export default function Whiteboard() {
         shapeObj = new fabric.Triangle({ ...commonProps, width: 100, height: 100 });
       } else if (newShape === 'line') {
         shapeObj = new fabric.Line([0, 0, 150, 150], {
-          left: canvasWidth / 2 - 75,
-          top: canvasHeight / 2 - 75,
+          left: viewCenter().x - 75,
+          top: viewCenter().y - 75,
           stroke: shapeStrokeColor,
           strokeWidth: 4,
           cornerStyle: 'circle',
@@ -1603,8 +1866,8 @@ export default function Whiteboard() {
       }
 
       const rulerGroup = new fabric.Group([frame, ...lines], {
-        left: canvasWidth / 2,
-        top: canvasHeight / 2,
+        left: viewCenter().x,
+        top: viewCenter().y,
         originX: 'center',
         originY: 'center',
         transparentCorners: false,
@@ -1643,28 +1906,220 @@ export default function Whiteboard() {
     }
   }, [newRuler, fabricCanvas, consumeNewRuler]);
 
-  // Handle Add Background
+  // A selection made only of maths pieces gets the duplicate and delete buttons, too
   useEffect(() => {
-    if (fabricCanvas && newBackgroundUrl) {
-      fabric.Image.fromURL(newBackgroundUrl).then((img) => {
-        const canvasWidth = fabricCanvas.width || 800;
-        const canvasHeight = fabricCanvas.height || 600;
-        const scale = Math.max(canvasWidth / img.width!, canvasHeight / img.height!);
+    if (!fabricCanvas) return;
+    const decorateSelection = () => {
+      const active = fabricCanvas.getActiveObject();
+      if (!(active instanceof fabric.ActiveSelection)) return;
+      const objects = active.getObjects();
+      if (objects.length === 0 || !objects.every((o) => (o as any).mathKind)) return;
+      active.controls = {
+        duplicateControl: createDuplicateControl(),
+        deleteControl: createSmallDeleteControl((target, c) => {
+          const pieces = (target as fabric.ActiveSelection).getObjects();
+          c.discardActiveObject();
+          pieces.forEach((o) => c.remove(o));
+          c.requestRenderAll();
+          commitCanvas();
+        }),
+      };
+      active.set({ lockRotation: true, lockScalingX: true, lockScalingY: true, borderColor: '#3b82f6' });
+      active.setCoords(); // control positions must be recomputed after replacing the controls
+      fabricCanvas.requestRenderAll();
+    };
+    fabricCanvas.on('selection:created', decorateSelection);
+    fabricCanvas.on('selection:updated', decorateSelection);
+    return () => {
+      fabricCanvas.off('selection:created', decorateSelection);
+      fabricCanvas.off('selection:updated', decorateSelection);
+    };
+  }, [fabricCanvas]);
 
-        img.set({
-          scaleX: scale,
-          scaleY: scale,
-          originX: 'left',
-          originY: 'top'
-        });
-        
-        fabricCanvas.backgroundImage = img;
-        fabricCanvas.renderAll();
-        commitCanvas(true); // background changes fire no Fabric event
+  // Handle Add Maths material
+  const newMathItem = useWhiteboardStore((state) => state.newMathItem);
+  const consumeNewMath = useWhiteboardStore((state) => state.consumeNewMath);
+  const mathInsertCount = useRef(0);
 
-        consumeNewBackground();
+  useEffect(() => {
+    if (!fabricCanvas || !newMathItem) return;
+    const items = createMathItems(newMathItem);
+    consumeNewMath();
+    if (items.length === 0) return;
+
+    // Lay the set out around the centre of the visible area; repeated inserts are staggered
+    // slightly so new pieces do not hide exactly behind earlier ones.
+    const boxes = items.map((o) => o.getBoundingRect());
+    const minX = Math.min(...boxes.map((b) => b.left));
+    const minY = Math.min(...boxes.map((b) => b.top));
+    const maxX = Math.max(...boxes.map((b) => b.left + b.width));
+    const maxY = Math.max(...boxes.map((b) => b.top + b.height));
+    const zoom = fabricCanvas.getZoom();
+    const visibleW = (fabricCanvas.width || 800) / zoom;
+    const visibleH = (fabricCanvas.height || 600) / zoom;
+    // shrink large material (e.g. Rechenrahmen 100) so it fits on smaller screens
+    const scale = Math.min(1, (visibleW * 0.9) / (maxX - minX), (visibleH * 0.75) / (maxY - minY));
+    const center = viewCenter();
+    const stagger = (mathInsertCount.current++ % 6) * 24;
+    const offsetX = center.x - ((maxX - minX) * scale) / 2 + stagger;
+    const offsetY = center.y - ((maxY - minY) * scale) / 2 + stagger;
+
+    items.forEach((obj) => {
+      obj.set({
+        left: offsetX + (obj.left - minX) * scale,
+        top: offsetY + (obj.top - minY) * scale,
+        scaleX: (obj.scaleX || 1) * scale,
+        scaleY: (obj.scaleY || 1) * scale,
       });
+      (obj as any).id = uuidv4();
+      decorateMathObject(obj);
+      obj.setCoords();
+      fabricCanvas.add(obj);
+      if ((obj as any).mathKind === 'field') fabricCanvas.sendObjectToBack(obj); // fields are a base
+    });
+    if (items.length === 1) {
+      fabricCanvas.setActiveObject(items[0]);
+    } else {
+      // select the whole set, so it can be moved or duplicated (+) right away
+      fabricCanvas.setActiveObject(new fabric.ActiveSelection(items, { canvas: fabricCanvas }));
     }
+    fabricCanvas.requestRenderAll();
+    commitCanvas();
+    useWhiteboardStore.getState().setActiveTool('move');
+  }, [newMathItem, fabricCanvas, consumeNewMath]);
+
+  // Zehner-/Zwanzigerfeld: counters snap into the cells while being dragged, and moving a
+  // field takes the pieces lying on it along.
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    let carried: { field: fabric.Object; pieces: fabric.Object[]; left: number; top: number } | null = null;
+
+    const onDown = (e: any) => {
+      const target = e.target as fabric.Object | undefined;
+      carried = null;
+      if (target && (target as any).mathKind === 'field') {
+        carried = { field: target, pieces: piecesOnField(target, fabricCanvas.getObjects()), left: target.left, top: target.top };
+      }
+    };
+    const onMoving = (e: any) => {
+      const target = e.target as fabric.Object;
+      if ((target as any).mathKind === 'counter') {
+        const fields = fabricCanvas.getObjects().filter((o) => (o as any).mathKind === 'field');
+        if (fields.length) snapCounterToFields(target, fields);
+      } else if (carried && target === carried.field) {
+        const dx = target.left - carried.left;
+        const dy = target.top - carried.top;
+        carried.pieces.forEach((p) => { p.set({ left: p.left + dx, top: p.top + dy }); p.setCoords(); });
+        carried.left = target.left;
+        carried.top = target.top;
+      }
+    };
+    const onUp = () => { carried = null; };
+
+    fabricCanvas.on('mouse:down', onDown);
+    fabricCanvas.on('object:moving', onMoving);
+    fabricCanvas.on('mouse:up', onUp);
+    return () => {
+      fabricCanvas.off('mouse:down', onDown);
+      fabricCanvas.off('object:moving', onMoving);
+      fabricCanvas.off('mouse:up', onUp);
+    };
+  }, [fabricCanvas]);
+
+  // Maths material interaction (in "Bewegen" mode): tap flips counters / slides abacus
+  // beads; dragging a clock hand turns it instead of moving the clock.
+  useEffect(() => {
+    if (!fabricCanvas || activeTool !== 'move') return;
+    let down: { target: fabric.Object; x: number; y: number } | null = null;
+    let hand: { clock: LearningClock; which: 'hour' | 'minute'; lockX: boolean; lockY: boolean } | null = null;
+
+    const onDown = (e: any) => {
+      down = null;
+      hand = null;
+      const target = e.target as fabric.Object | undefined;
+      if (!target || !(target as any).mathKind) return;
+      const point = fabricCanvas.getScenePoint(e.e);
+      down = { target, x: e.e.clientX ?? e.e.touches?.[0]?.clientX ?? 0, y: e.e.clientY ?? e.e.touches?.[0]?.clientY ?? 0 };
+      if (target instanceof LearningClock) {
+        const which = target.pickHand(toLocal(target, point));
+        if (which) {
+          hand = { clock: target, which, lockX: !!target.lockMovementX, lockY: !!target.lockMovementY };
+          target.set({ lockMovementX: true, lockMovementY: true });
+        }
+      }
+    };
+    const onMove = (e: any) => {
+      if (!hand) return;
+      if (hand.clock.turnHand(hand.which, toLocal(hand.clock, fabricCanvas.getScenePoint(e.e)))) {
+        fabricCanvas.requestRenderAll();
+      }
+    };
+    const onUp = (e: any) => {
+      if (hand) {
+        hand.clock.set({ lockMovementX: hand.lockX, lockMovementY: hand.lockY });
+        hand = null;
+        down = null;
+        commitCanvas(true); // the hand position lives in mathData, no Fabric event
+        return;
+      }
+      if (!down) return;
+      const x = e.e.clientX ?? e.e.changedTouches?.[0]?.clientX ?? down.x;
+      const y = e.e.clientY ?? e.e.changedTouches?.[0]?.clientY ?? down.y;
+      const tapped = e.target === down.target && Math.hypot(x - down.x, y - down.y) < 6;
+      const target = down.target;
+      down = null;
+      if (tapped && handleMathTap(target, fabricCanvas.getScenePoint(e.e))) {
+        fabricCanvas.requestRenderAll();
+        commitCanvas(true);
+      }
+    };
+
+    fabricCanvas.on('mouse:down', onDown);
+    fabricCanvas.on('mouse:move', onMove);
+    fabricCanvas.on('mouse:up', onUp);
+    return () => {
+      fabricCanvas.off('mouse:down', onDown);
+      fabricCanvas.off('mouse:move', onMove);
+      fabricCanvas.off('mouse:up', onUp);
+    };
+  }, [fabricCanvas, activeTool]);
+
+  // Handle Add / Remove Background ('' removes it)
+  useEffect(() => {
+    if (!fabricCanvas || newBackgroundUrl === null) return;
+    if (newBackgroundUrl === '') {
+      fabricCanvas.backgroundImage = undefined;
+      fabricCanvas.renderAll();
+      commitCanvas(true); // background changes fire no Fabric event
+      consumeNewBackground();
+      return;
+    }
+    const template = BACKGROUND_TEMPLATES.find(t => t.url === newBackgroundUrl);
+    fabric.Image.fromURL(newBackgroundUrl).then((img) => {
+      const canvasWidth = fabricCanvas.width || 800;
+      const canvasHeight = fabricCanvas.height || 600;
+      // Ruled paper and grids fill the board; charts are shown completely
+      const fit = template?.fit === 'contain' ? Math.min : Math.max;
+      const scale = fit(canvasWidth / img.width!, canvasHeight / img.height!);
+
+      img.set({
+        scaleX: scale,
+        scaleY: scale,
+        originX: 'left',
+        originY: 'top',
+        left: (canvasWidth - img.width! * scale) / 2,
+        top: (canvasHeight - img.height! * scale) / 2,
+      });
+
+      fabricCanvas.backgroundImage = img;
+      fabricCanvas.renderAll();
+      commitCanvas(true); // background changes fire no Fabric event
+
+      consumeNewBackground();
+    }).catch((error) => {
+      console.error('Hintergrund konnte nicht geladen werden:', error);
+      consumeNewBackground();
+    });
   }, [newBackgroundUrl, fabricCanvas, consumeNewBackground]);
 
   const prevPageId = useRef(currentPageId);
@@ -1678,6 +2133,7 @@ export default function Whiteboard() {
     const notebookLoaded = prevNotebookLoadSignal.current !== notebookLoadSignal;
 
     if (!pageChanged && !notebookLoaded) return;
+    resetViewport(); // every page starts with the normal, unzoomed view
 
     // Reset full history when a new notebook is loaded
     if (notebookLoaded) {
@@ -1794,7 +2250,7 @@ export default function Whiteboard() {
       const toAdd: fabric.Path[] = [];
 
       for (const obj of fabricCanvas.getObjects()) {
-        if ((obj as any).isRuler || (obj as any).timerType || (obj as any).youtubeId) continue;
+        if ((obj as any).isRuler || (obj as any).timerType || (obj as any).youtubeId || (obj as any).mathKind) continue;
 
         const bounds = obj.getBoundingRect();
         if (
@@ -2024,7 +2480,7 @@ export default function Whiteboard() {
       const newTimers: TimerRect[] = [];
 
       objects.forEach(obj => {
-        const bound = obj.getBoundingRect();
+        const bound = screenRect(obj, fabricCanvas);
         
         if ((obj as any).youtubeId) {
           if (!(obj as any).id) (obj as any).id = uuidv4();
@@ -2072,7 +2528,7 @@ export default function Whiteboard() {
         const textObj = activeObject as fabric.Textbox;
         
         // Fabric 6 uses getBoundingRect
-        const boundingRect = textObj.getBoundingRect();
+        const boundingRect = screenRect(textObj, fabricCanvas);
 
         const effectiveFontSize = Math.round(textObj.fontSize || 40);
 
@@ -2283,6 +2739,21 @@ export default function Whiteboard() {
     >
       <canvas ref={canvasRef} />
 
+      {viewport.moved && (
+        <button
+          onClick={resetViewport}
+          title="Ansicht zurücksetzen (Zoom 100 %)"
+          style={{
+            position: 'absolute', top: '12px', right: '12px', zIndex: 20,
+            padding: '8px 14px', borderRadius: '999px', border: '1px solid var(--border)',
+            background: 'var(--surface)', color: 'var(--foreground)', fontWeight: 600,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', cursor: 'pointer'
+          }}
+        >
+          {Math.round(viewport.zoom * 100)} % · Ansicht zurücksetzen
+        </button>
+      )}
+
       <div
         ref={eraserCursorRef}
         style={{
@@ -2300,8 +2771,9 @@ export default function Whiteboard() {
         <div
           style={{
             position: 'absolute',
-            left: rsPicker.left,
-            top: rsPicker.top,
+            // rsPicker holds scene coordinates (where the symbol goes); show it on screen
+            left: rsPicker.left * viewport.zoom + (fabricCanvas?.viewportTransform[4] ?? 0),
+            top: rsPicker.top * viewport.zoom + (fabricCanvas?.viewportTransform[5] ?? 0),
             width: 0,
             height: 0,
             zIndex: 120,

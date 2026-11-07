@@ -19,6 +19,8 @@ export interface JournalImage {
   url: string;
 }
 
+export type ClassroomTool = 'names' | 'groups' | 'dice' | 'noise';
+
 interface WhiteboardState {
   activeTool: ToolType;
   setActiveTool: (tool: ToolType) => void;
@@ -65,6 +67,11 @@ interface WhiteboardState {
   consumeNewShape: () => void;
 
   // Ruler Trigger
+  // Maths material to insert (id from MATH_MENU)
+  newMathItem: string | null;
+  triggerAddMath: (id: string) => void;
+  consumeNewMath: () => void;
+
   newRuler: boolean;
   triggerAddRuler: () => void;
   consumeNewRuler: () => void;
@@ -78,6 +85,19 @@ interface WhiteboardState {
   // Registered by the Whiteboard: writes the live canvas into the current page before saving
   canvasFlush: (() => void) | null;
   setCanvasFlush: (fn: (() => void) | null) => void;
+
+  // Save tracking: every content change increments `revision`; a notebook is clean when
+  // `savedRevision` caught up. `notebookGeneration` changes whenever another notebook is
+  // loaded or a new one started, so a late save response cannot mark the wrong one clean.
+  revision: number;
+  savedRevision: number;
+  notebookGeneration: number;
+  markSaved: (revision: number, generation: number) => void;
+  saveState: 'idle' | 'saving' | 'error';
+  setSaveState: (state: 'idle' | 'saving' | 'error') => void;
+  lastSavedAt: number | null;
+  saveMessage: { kind: 'ok' | 'error'; text: string } | null;
+  setSaveMessage: (message: { kind: 'ok' | 'error'; text: string } | null) => void;
   
   // Persistence
   notebookId: string | null;
@@ -89,6 +109,10 @@ interface WhiteboardState {
   renameNotebook: (newName: string) => void;
 
   // Journal Sidebar
+  // Floating classroom tools panel (not part of the notebook)
+  classroomTool: ClassroomTool | null;
+  setClassroomTool: (tool: ClassroomTool | null) => void;
+
   isJournalOpen: boolean;
   toggleJournal: () => void;
   setJournalOpen: (open: boolean) => void;
@@ -151,6 +175,10 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
   triggerAddShape: (type) => set({ newShape: type }),
   consumeNewShape: () => set({ newShape: null }),
 
+  newMathItem: null,
+  triggerAddMath: (id) => set({ newMathItem: id }),
+  consumeNewMath: () => set({ newMathItem: null }),
+
   newRuler: false,
   triggerAddRuler: () => set({ newRuler: true }),
   consumeNewRuler: () => set({ newRuler: false }),
@@ -162,7 +190,8 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
     const newPageId = uuidv4();
     set((state) => ({
       pages: [...state.pages, { id: newPageId, canvasData: null }],
-      currentPageId: newPageId
+      currentPageId: newPageId,
+      revision: state.revision + 1
     }));
   },
 
@@ -180,19 +209,35 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
 
       return {
         pages: newPages,
-        currentPageId: state.currentPageId === id ? newPages[0].id : state.currentPageId
+        currentPageId: state.currentPageId === id ? newPages[0].id : state.currentPageId,
+        revision: state.revision + 1
       };
     });
   },
 
   updatePageData: (id, data) => {
     set((state) => ({
-      pages: state.pages.map(p => p.id === id ? { ...p, canvasData: data } : p)
+      pages: state.pages.map(p => p.id === id ? { ...p, canvasData: data } : p),
+      revision: state.revision + 1
     }));
   },
 
   canvasFlush: null,
   setCanvasFlush: (fn) => set({ canvasFlush: fn }),
+
+  revision: 0,
+  savedRevision: 0,
+  notebookGeneration: 0,
+  markSaved: (revision, generation) => set((state) =>
+    state.notebookGeneration === generation && revision > state.savedRevision
+      ? { savedRevision: revision, lastSavedAt: Date.now() }
+      : state.notebookGeneration === generation ? { lastSavedAt: Date.now() } : {}
+  ),
+  saveState: 'idle',
+  setSaveState: (saveState) => set({ saveState }),
+  lastSavedAt: null,
+  saveMessage: null,
+  setSaveMessage: (saveMessage) => set({ saveMessage }),
 
   notebookId: null,
   notebookName: null,
@@ -204,7 +249,10 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
     notebookLoadSignal: state.notebookLoadSignal + 1,
     pages: pages,
     currentPageId: pages[0]?.id || uuidv4(),
-    journalImages
+    journalImages,
+    savedRevision: state.revision,
+    notebookGeneration: state.notebookGeneration + 1,
+    lastSavedAt: null
   })),
   resetNotebook: () => {
     const newId = uuidv4();
@@ -214,16 +262,22 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
       pages: [{ id: newId, canvasData: null }],
       currentPageId: newId,
       clearCanvasSignal: state.clearCanvasSignal + 1,
-      journalImages: []
+      journalImages: [],
+      savedRevision: state.revision,
+      notebookGeneration: state.notebookGeneration + 1,
+      lastSavedAt: null
     }));
   },
-  renameNotebook: (newName: string) => set({ notebookName: newName }),
+  renameNotebook: (newName: string) => set((state) => ({ notebookName: newName, revision: state.revision + 1 })),
+
+  classroomTool: null,
+  setClassroomTool: (classroomTool) => set({ classroomTool }),
 
   isJournalOpen: false,
   toggleJournal: () => set((state) => ({ isJournalOpen: !state.isJournalOpen })),
   setJournalOpen: (open) => set({ isJournalOpen: open }),
   journalImages: [],
-  setJournalImages: (images) => set({ journalImages: images }),
+  setJournalImages: (images) => set((state) => ({ journalImages: images, revision: state.revision + 1 })),
 
   undoSignal: 0,
   triggerUndo: () => set((state) => ({ undoSignal: state.undoSignal + 1 })),

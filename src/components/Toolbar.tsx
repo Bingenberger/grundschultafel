@@ -1,13 +1,14 @@
 import { useWhiteboardStore, ToolType } from '@/store/useWhiteboardStore';
 import { HexColorPicker } from 'react-colorful';
 import { MousePointer2, Pen, Eraser, Trash2, Image as ImageIcon, ImagePlus, QrCode, X, Youtube, Camera, Type, Briefcase, Shapes, Minus, PlusSquare, PaintBucket, Highlighter, Undo2, Redo2 } from 'lucide-react';
-import { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import GalleryModal from './GalleryModal';
 import YoutubeModal from './YoutubeModal';
 import ToolboxModal from './ToolboxModal';
 import ShapeModal from './ShapeModal';
 import { QRCodeCanvas } from 'qrcode.react';
 import { v4 as uuidv4 } from 'uuid';
+import { BACKGROUND_TEMPLATES } from '@/lib/backgroundTemplates';
 
 export default function Toolbar() {
   const {
@@ -639,40 +640,50 @@ export default function Toolbar() {
 	              display: 'grid',
 	              gridTemplateColumns: 'repeat(3, 1fr)',
 	              gap: '15px',
-	              width: '450px',
-	              maxHeight: '400px',
+	              width: 'min(480px, calc(100vw - 32px))',
+	              maxHeight: '70vh',
 	              overflowY: 'auto',
 	              zIndex: 101
 	            }}>
-	              {backgrounds.length === 0 ? (
-	                <div style={{ gridColumn: 'span 3', textAlign: 'center', color: 'var(--border)', fontSize: '0.8rem' }}>
-	                  Keine Hintergründe in /public/assets/backgrounds
-	                </div>
-	              ) : (
-	                backgrounds.map(bg => (
-	                  <button
-	                    key={bg}
-	                    onClick={() => {
-	                      triggerSetBackground(bg);
-	                      setShowBgSelector(false);
-	                    }}
-	                    style={{
-	                      width: '100%',
-	                      aspectRatio: '4/3',
-	                      backgroundImage: `url(${bg})`,
-	                      backgroundSize: 'cover',
-	                      backgroundPosition: 'center',
-	                      border: '2px solid transparent',
-	                      borderRadius: '6px',
-	                      cursor: 'pointer',
-	                      transition: 'border-color 0.2s',
-	                    }}
-	                    onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--primary)'}
-	                    onMouseLeave={(e) => e.currentTarget.style.borderColor = 'transparent'}
-	                    title="Hintergrund wählen"
-	                  />
-	                ))
-	              )}
+	              {[
+	                ...(['Deutsch', 'Mathematik'] as const).map(group => ({
+	                  group,
+	                  items: BACKGROUND_TEMPLATES.filter(t => t.group === group).map(t => ({ key: t.id, url: t.url, name: t.name })),
+	                })),
+	                { group: 'Eigene Hintergründe', items: backgrounds.map(bg => ({ key: bg, url: bg, name: decodeURIComponent(bg.split('/').pop() || '').replace(/\.[^.]+$/, '').replace(/_/g, ' ') })) },
+	              ].filter(section => section.items.length > 0).map(section => (
+	                <React.Fragment key={section.group}>
+	                  <div style={{ gridColumn: 'span 3', fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--foreground)', opacity: 0.7, marginTop: '4px' }}>
+	                    {section.group}
+	                  </div>
+	                  {section.items.map(item => (
+	                    <button
+	                      key={item.key}
+	                      onClick={() => {
+	                        triggerSetBackground(item.url);
+	                        setShowBgSelector(false);
+	                      }}
+	                      style={{
+	                        display: 'flex', flexDirection: 'column', gap: '4px', padding: 0,
+	                        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--foreground)',
+	                      }}
+	                      title={item.name}
+	                    >
+	                      <span style={{
+	                        width: '100%',
+	                        aspectRatio: '16/9',
+	                        backgroundColor: 'white',
+	                        backgroundImage: `url("${item.url}")`,
+	                        backgroundSize: 'cover',
+	                        backgroundPosition: 'center',
+	                        border: '2px solid var(--border)',
+	                        borderRadius: '6px',
+	                      }} />
+	                      <span style={{ fontSize: '0.75rem', textAlign: 'center' }}>{item.name}</span>
+	                    </button>
+	                  ))}
+	                </React.Fragment>
+	              ))}
 	              <button
 	                onClick={() => {
 	                  triggerSetBackground('');

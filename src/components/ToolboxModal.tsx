@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
-import { Timer, Ruler } from 'lucide-react';
+import { Timer, Ruler, Shuffle, Users, Dices, Volume2, Calculator } from 'lucide-react';
+import { MATH_MENU } from '@/lib/mathManipulatives';
 
 interface ToolboxModalProps {
   onClose: () => void;
@@ -9,7 +10,13 @@ interface ToolboxModalProps {
 export default function ToolboxModal({ onClose }: ToolboxModalProps) {
   const triggerAddTimer = useWhiteboardStore((state) => state.triggerAddTimer);
   const triggerAddRuler = useWhiteboardStore((state) => state.triggerAddRuler);
-  const [view, setView] = useState<'main' | 'timer'>('main');
+  const setClassroomTool = useWhiteboardStore((state) => state.setClassroomTool);
+  const openTool = (tool: 'names' | 'groups' | 'dice' | 'noise') => {
+    setClassroomTool(tool);
+    onClose();
+  };
+  const [view, setView] = useState<'main' | 'timer' | 'math'>('main');
+  const triggerAddMath = useWhiteboardStore((state) => state.triggerAddMath);
 
   const addRuler = () => {
     triggerAddRuler();
@@ -36,11 +43,34 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
             label="Timer"
             onClick={() => setView('timer')}
           />
+          <MenuButton icon={<Calculator size={18} />} label="Mathe" onClick={() => setView('math')} />
           <MenuButton
             icon={<Ruler size={18} />}
             label="Lineal"
             onClick={addRuler}
           />
+          <MenuButton icon={<Shuffle size={18} />} label="Namen ziehen" onClick={() => openTool('names')} />
+          <MenuButton icon={<Users size={18} />} label="Gruppen" onClick={() => openTool('groups')} />
+          <MenuButton icon={<Dices size={18} />} label="Würfel" onClick={() => openTool('dice')} />
+          <MenuButton icon={<Volume2 size={18} />} label="Lautstärke" onClick={() => openTool('noise')} />
+        </div>
+      ) : view === 'math' ? (
+        // Stays open so several pieces can be added in a row
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: 'min(460px, calc(100vw - 32px))', maxHeight: '60vh', overflowY: 'auto' }}>
+          {MATH_MENU.map((section) => (
+            <div key={section.title}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 'bold', opacity: 0.7, marginBottom: '6px' }}>{section.title}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {section.items.map((item) => (
+                  <TimerButton key={item.id} onClick={() => triggerAddMath(item.id)} label={item.label} />
+                ))}
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <TimerButton onClick={() => setView('main')} label="Zurück" subtle />
+            <TimerButton onClick={onClose} label="Fertig" subtle />
+          </div>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(110px, 1fr))', gap: '8px', minWidth: '260px' }}>

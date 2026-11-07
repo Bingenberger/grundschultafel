@@ -3,13 +3,13 @@
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
 import { useState, useEffect, useRef } from 'react';
 import { Save, FolderOpen, ChevronUp, ChevronDown, Plus, X, FilePlus, Pen, Trash2, LogOut, ShieldAlert, List } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
 import { useRouter } from 'next/navigation';
+import { saveNotebook, saveBeforeLeaving, hasUnsavedChanges } from '@/lib/notebookSave';
 
 export default function Sidebar() {
   const { 
     notebookId, notebookName, pages, currentPageId, 
-    setNotebook, loadNotebookState, switchPage, addPage,
+    loadNotebookState, switchPage, addPage,
     resetNotebook, renameNotebook,
     isJournalOpen, toggleJournal
   } = useWhiteboardStore();
@@ -19,24 +19,50 @@ export default function Sidebar() {
   const [renameInput, setRenameInput] = useState('');
   const [notebookToDelete, setNotebookToDelete] = useState<{id: string, name: string} | null>(null);
   const [notebooks, setNotebooks] = useState<{ id: string, name: string, updatedAt: string }[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
-  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showSaveStatus = (status: { kind: 'ok' | 'error'; text: string }) => {
-    if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
-    setSaveStatus(status);
-    // Success fades out; errors stay until dismissed so they cannot be missed
-    if (status.kind === 'ok') saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 2000);
-  };
-  const saveErrorText = (status: number) => {
-    if (status === 401 || status === 403) {
-      return 'Nicht gespeichert: Deine Anmeldung ist abgelaufen. Bitte in einem neuen Tab anmelden (diesen Tab offen lassen!) und dann hier erneut speichern.';
-    }
-    if (status === 413) {
-      return 'Nicht gespeichert: Das Heft ist zu groß (zu viele oder zu große Bilder). Bitte Bilder entfernen oder auf mehrere Hefte verteilen.';
-    }
-    return `Nicht gespeichert (Fehler ${status}). Bitte erneut versuchen.`;
-  };
+  const saveState = useWhiteboardStore((state) => state.saveState);
+  const saveMessage = useWhiteboardStore((state) => state.saveMessage);
+  const setSaveMessage = useWhiteboardStore((state) => state.setSaveMessage);
+  const revision = useWhiteboardStore((state) => state.revision);
+  const savedRevision = useWhiteboardStore((state) => state.savedRevision);
+  const lastSavedAt = useWhiteboardStore((state) => state.lastSavedAt);
+  const isDirty = revision !== savedRevision;
+  const dirtySince = useRef<number | null>(null);
+
+  // Success messages fade out; errors stay until dismissed so they cannot be missed
+  useEffect(() => {
+    if (saveMessage?.kind !== 'ok') return;
+    const timer = setTimeout(() => setSaveMessage(null), 2000);
+    return () => clearTimeout(timer);
+  }, [saveMessage, setSaveMessage]);
+
+  // Autosave: 3 s after the last change, but at the latest 20 s after the first unsaved one
+  // (so continuous drawing is still saved regularly).
+  useEffect(() => {
+    if (!isDirty) { dirtySince.current = null; return; }
+    if (dirtySince.current === null) dirtySince.current = Date.now();
+    const delay = Math.min(3000, Math.max(0, 20000 - (Date.now() - dirtySince.current)));
+    const timer = setTimeout(() => { void saveNotebook({ auto: true }); }, delay);
+    return () => clearTimeout(timer);
+  }, [revision, isDirty]);
+
+  // Save when the tab is hidden (switching apps, closing the iPad cover) and warn before
+  // closing the tab while changes are still unsaved.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden' && hasUnsavedChanges()) void saveNotebook({ auto: true }); };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges()) return;
+      void saveNotebook({ auto: true });
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, []);
+
   const [user, setUser] = useState<{username: string, role: string} | null>(null);
   const router = useRouter();
 
@@ -61,50 +87,10 @@ export default function Sidebar() {
     }
   };
 
-  const handleSave = async () => {
-    setSaving(true);
-    let id = notebookId;
-    let name = notebookName;
-
-    if (!id) {
-      id = uuidv4();
-      if (!name) {
-        const now = new Date();
-        name = `Tafelheft ${now.toLocaleDateString('de-DE')} ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-      }
-      setNotebook(id, name);
-    } else if (!name) {
-      const now = new Date();
-      name = `Tafelheft ${now.toLocaleDateString('de-DE')} ${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
-      setNotebook(id, name);
-    }
-
-    try {
-      // Write the live canvas into the store first, then read the freshest state
-      useWhiteboardStore.getState().canvasFlush?.();
-      const { pages, journalImages } = useWhiteboardStore.getState();
-      const payload = { name, pages, journalImages };
-      console.log('[Save] Speichere Heft, Seiten:', pages.length, '– Objekte pro Seite:', pages.map(p => (p.canvasData as any)?.objects?.length ?? 'kein canvasData'));
-      const res = await fetch(`/api/notebooks/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      console.log('[Save] Server-Antwort:', res.status, res.ok ? 'OK' : 'FEHLER');
-      if (res.ok) {
-        showSaveStatus({ kind: 'ok', text: 'Gespeichert' });
-      } else {
-        showSaveStatus({ kind: 'error', text: saveErrorText(res.status) });
-      }
-    } catch (e) {
-      console.error('Fehler beim Speichern!', e);
-      showSaveStatus({ kind: 'error', text: 'Nicht gespeichert: Der Server ist nicht erreichbar. Bitte Verbindung prüfen und erneut speichern.' });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const handleSave = () => { void saveNotebook({ auto: false }); };
 
   const handleLoad = async (id: string, name: string) => {
+    if (!await saveBeforeLeaving()) return;
     try {
       const res = await fetch(`/api/notebooks/${id}`);
       const data = await res.json();
@@ -146,6 +132,7 @@ export default function Sidebar() {
 
   const handleLogout = async () => {
     if (window.confirm('Möchtest du dich wirklich abmelden?')) {
+      if (!await saveBeforeLeaving()) return;
       await fetch('/api/auth/logout', { method: 'POST' });
       router.push('/login');
     }
@@ -193,6 +180,14 @@ export default function Sidebar() {
 
   const currentDisplayName = notebookName || 'Unbenanntes Tafelheft';
 
+  const savedTime = lastSavedAt ? new Date(lastSavedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : null;
+  const saveTitle = saveState === 'saving' ? 'Wird gespeichert …'
+    : saveState === 'error' ? 'Speichern fehlgeschlagen – zum erneuten Versuch tippen'
+    : isDirty ? 'Ungespeicherte Änderungen (wird automatisch gespeichert)'
+    : savedTime ? `Gespeichert um ${savedTime} (automatisch)` : 'Speichern';
+  // amber: changes pending, red: last save failed; nothing when everything is saved
+  const saveBadge = saveState === 'error' ? 'var(--danger)' : isDirty || saveState === 'saving' ? '#f59e0b' : null;
+
   const handleRenameClick = () => {
     setRenameInput(currentDisplayName);
     setIsRenameOpen(true);
@@ -206,10 +201,10 @@ export default function Sidebar() {
     }
   };
 
-  const handleNewNotebook = () => {
-    if (window.confirm('Willst du wirklich ein neues Tafelheft anfangen? (Nicht gespeicherte Änderungen gehen verloren!)')) {
-      resetNotebook();
-    }
+  const handleNewNotebook = async () => {
+    if (!window.confirm('Neues Tafelheft anfangen? Das aktuelle Heft wird vorher gespeichert.')) return;
+    if (!await saveBeforeLeaving()) return;
+    resetNotebook();
   };
 
   return (
@@ -278,11 +273,18 @@ export default function Sidebar() {
         {/* Save */}
         <button 
           onClick={handleSave} 
-          disabled={saving} 
-          style={{...buttonStyle, color: saving ? 'var(--border)' : 'var(--primary)'}}
-          title="Speichern"
+          disabled={saveState === 'saving'} 
+          style={{...buttonStyle, position: 'relative', color: saveState === 'saving' ? 'var(--border)' : 'var(--primary)'}}
+          title={saveTitle}
+          aria-label={saveTitle}
         >
           <Save size={20} />
+          {saveBadge && (
+            <span aria-hidden style={{
+              position: 'absolute', top: '5px', right: '5px', width: '10px', height: '10px', borderRadius: '50%',
+              background: saveBadge, border: '2px solid var(--surface)'
+            }} />
+          )}
         </button>
 
         {/* Load */}
@@ -546,19 +548,19 @@ export default function Sidebar() {
         </div>
       )}
 
-      {saveStatus && (
+      {saveMessage && (
         <div
-          role={saveStatus.kind === 'error' ? 'alert' : 'status'}
-          onClick={() => setSaveStatus(null)}
+          role={saveMessage.kind === 'error' ? 'alert' : 'status'}
+          onClick={() => setSaveMessage(null)}
           title="Schließen"
           style={{
             position: 'fixed', left: '50%', bottom: '24px', transform: 'translateX(-50%)',
             maxWidth: 'min(560px, calc(100vw - 32px))', padding: '12px 18px', borderRadius: '10px',
-            background: saveStatus.kind === 'error' ? 'var(--danger)' : 'var(--primary)', color: 'white',
+            background: saveMessage.kind === 'error' ? 'var(--danger)' : 'var(--primary)', color: 'white',
             fontWeight: 600, boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 10000, cursor: 'pointer'
           }}
         >
-          {saveStatus.text}
+          {saveMessage.text}
         </div>
       )}
     </div>
