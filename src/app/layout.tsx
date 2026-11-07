@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TafelPopafel",
+  title: "Grundschultafel",
   description: "Eine interaktive Tafel für den Unterricht.",
 };
 

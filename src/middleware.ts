@@ -12,7 +12,8 @@ async function access(req:NextRequest) {
     const origin=req.headers.get('origin');
     if(origin&&origin!==publicOrigin()) return NextResponse.json({error:'Unzulässiger Ursprung'},{status:403});
   }
-  if(path.startsWith('/_next/')||path==='/favicon.ico') return NextResponse.next();
+  // browser tab / home screen icons must also show on the login page
+  if(path.startsWith('/_next/')||['/favicon.ico','/icon.svg','/apple-icon.png'].includes(path)) return NextResponse.next();
   const session=await sessionFor(req.cookies.get('session')?.value,req.cookies.get('tafel_device')?.value);
   if(!session&&!publicRoute(path)) {
     if(path.startsWith('/api/')||path.startsWith('/assets/')) return NextResponse.json({error:'Unauthorized'},{status:401});
