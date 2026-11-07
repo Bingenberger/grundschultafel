@@ -90,6 +90,10 @@ Löschung alter Unterrichtsdateien. QR-Zugänge gehören nicht hinter zusätzlic
 
 GALLERY_ORIGIN ist standardmäßig leer; externe Galerie dann 503. Bei expliziter
 Aktivierung nur die konfigurierte Origin, keine Redirects, Zeit-/Größenlimits.
+WOERTERBUCH_ORIGIN (z. B. https://woerterbuch.example.org) bindet das Grundschul-Wörterbuch
+(gswb) für Blitzlesen und Silbenrutsche an: Wortlisten (/api/words), Bilder und Töne holt die
+Tafel serverseitig ab, nur Pfade unter /static/images und /static/audio, keine Redirects,
+Zeit-/Größenlimits. Leer = aus (503), die Tafel nutzt dann nur ihre eigenen Wortlisten.
 YouTube-Suche benötigt TAFEL_YOUTUBE_ENABLED=1 und einen Schlüssel, entweder als Datei
 (YOUTUBE_API_KEY_FILE, so stellt ihn die Plattform bereit) oder als YOUTUBE_API_KEY; sonst 503.
 Direkt eingefügte Video-URLs können weiterhin externe Browserabrufe verursachen.

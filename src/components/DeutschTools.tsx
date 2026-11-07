@@ -80,10 +80,47 @@ function useWordLists() {
   return { lists: [...BUILT_IN_LISTS, ...own], own, save, error };
 }
 
-function ListPicker({ lists, value, onChange, onEdit }: { lists: WordList[]; value: string; onChange: (id: string) => void; onEdit: () => void }) {
+const DICT = '__woerterbuch__';
+
+// Plays the dictionary recording if there is one, otherwise the browser's speech output
+function playWord(word: ReadingWord) {
+  if (word.audio) {
+    new Audio(word.audio).play().catch(() => speak(word.text));
+  } else {
+    speak(word.text);
+  }
+}
+
+interface DictFilters { categories: { category: string; count: number }[]; partsOfSpeech: { part_of_speech: string; count: number }[] }
+
+// Where the words come from: start lists, own lists or the Grundschul-Wörterbuch
+function useWordSource(initialId: string) {
+  const { lists, own, save, error } = useWordLists();
+  const [selection, setSelection] = useState(initialId);
+  const [dict, setDict] = useState<{ label: string; words: ReadingWord[] } | null>(null);
+  const [filters, setFilters] = useState<DictFilters | null>(null);
+  useEffect(() => {
+    fetch('/api/woerterbuch/filters')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setFilters(d))
+      .catch(() => undefined); // dictionary not connected: only own/start lists
+  }, []);
+  const list = lists.find((l) => l.id === selection) ?? BUILT_IN_LISTS[0];
+  const words = useMemo(
+    () => (selection === DICT ? dict?.words ?? [] : list.words.map(toReadingWord)),
+    [selection, dict, list],
+  );
+  const applyDict = (label: string, dictWords: ReadingWord[]) => { setDict({ label, words: dictWords }); setSelection(DICT); };
+  return { lists, own, save, error, selection, setSelection, dict, applyDict, filters, words };
+}
+type WordSource = ReturnType<typeof useWordSource>;
+
+function ListPicker({ source, onChange, onEdit, onDict }: { source: WordSource; onChange?: () => void; onEdit?: () => void; onDict: () => void }) {
+  const { lists, selection, setSelection, dict, filters } = source;
   return (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...field, flex: 1, minWidth: '200px' }}>
+      <select value={selection} onChange={(e) => { setSelection(e.target.value); onChange?.(); }} style={{ ...field, flex: 1, minWidth: '200px' }}>
+        {dict && <option value={DICT}>Wörterbuch: {dict.label} ({dict.words.length})</option>}
         <optgroup label="Startlisten">
           {lists.filter((l) => l.builtIn).map((l) => <option key={l.id} value={l.id}>{l.name} ({l.words.length})</option>)}
         </optgroup>
@@ -93,7 +130,91 @@ function ListPicker({ lists, value, onChange, onEdit }: { lists: WordList[]; val
           </optgroup>
         )}
       </select>
-      <button style={btn()} onClick={onEdit}>Eigene Listen …</button>
+      {filters && <button style={btn()} onClick={onDict}>Aus dem Wörterbuch …</button>}
+      {onEdit && <button style={btn()} onClick={onEdit}>Eigene Listen …</button>}
+    </div>
+  );
+}
+
+// Choose words from the Grundschul-Wörterbuch by category, syllables, known letters …
+function DictionaryPicker({ filters, onLoaded, onCancel, minSyllables = 1 }: {
+  filters: DictFilters; onLoaded: (label: string, words: ReadingWord[]) => void; onCancel: () => void; minSyllables?: number;
+}) {
+  const [category, setCategory] = useState('');
+  const [partOfSpeech, setPartOfSpeech] = useState('');
+  const [syllables, setSyllables] = useState<number | null>(minSyllables > 1 ? minSyllables : null);
+  const [letters, setLetters] = useState('');
+  const [contains, setContains] = useState('');
+  const [withImage, setWithImage] = useState(true);
+  const [count, setCount] = useState(20);
+  const [state, setState] = useState<{ busy: boolean; message: string | null }>({ busy: false, message: null });
+
+  const load = async () => {
+    const params = new URLSearchParams({ anzahl: String(count), zufall: '1' });
+    if (category) params.set('kategorie', category);
+    if (partOfSpeech) params.set('wortart', partOfSpeech);
+    if (syllables === 4) params.set('silben_min', '4');
+    else if (syllables) params.set('silben', String(syllables));
+    else if (minSyllables > 1) params.set('silben_min', String(minSyllables));
+    if (letters.trim()) params.set('buchstaben', letters.trim());
+    if (contains.trim()) params.set('enthaelt', contains.trim());
+    if (withImage) params.set('mit_bild', '1');
+    setState({ busy: true, message: null });
+    const res = await fetch(`/api/woerterbuch/words?${params}`).catch(() => null);
+    if (!res?.ok) { setState({ busy: false, message: 'Das Wörterbuch ist gerade nicht erreichbar.' }); return; }
+    const data = await res.json();
+    if (!data.words.length) { setState({ busy: false, message: 'Keine Wörter gefunden – lockere die Auswahl etwas.' }); return; }
+    const label = [category, partOfSpeech, syllables ? (syllables === 4 ? '4+ Silben' : `${syllables} Silbe${syllables > 1 ? 'n' : ''}`) : '', letters && `nur ${letters.toUpperCase()}`, contains && `mit „${contains}“`]
+      .filter(Boolean).join(', ') || 'gemischt';
+    onLoaded(label, data.words);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <strong style={{ fontSize: '1.1rem' }}>Wörter aus dem Grundschul-Wörterbuch</strong>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 700, flex: 1, minWidth: '200px' }}>
+          Rechtschreibkategorie
+          <select value={category} onChange={(e) => setCategory(e.target.value)} style={field}>
+            <option value="">alle</option>
+            {filters.categories.map((c) => <option key={c.category} value={c.category}>{c.category} ({c.count})</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 700, flex: 1, minWidth: '160px' }}>
+          Wortart
+          <select value={partOfSpeech} onChange={(e) => setPartOfSpeech(e.target.value)} style={field}>
+            <option value="">alle</option>
+            {filters.partsOfSpeech.map((p) => <option key={p.part_of_speech} value={p.part_of_speech}>{p.part_of_speech} ({p.count})</option>)}
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <strong style={{ marginRight: '4px' }}>Silben</strong>
+        {minSyllables <= 1 && <button style={chip(syllables === null)} onClick={() => setSyllables(null)}>alle</button>}
+        {[1, 2, 3, 4].filter((n) => n >= minSyllables).map((n) => (
+          <button key={n} style={chip(syllables === n)} onClick={() => setSyllables(n)}>{n === 4 ? '4 und mehr' : n}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 700, flex: 2, minWidth: '220px' }}>
+          Nur diese Buchstaben (schon gelernt)
+          <input value={letters} onChange={(e) => setLetters(e.target.value)} placeholder="z. B. M A L O I E" style={field} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontWeight: 700, flex: 1, minWidth: '140px' }}>
+          Enthält
+          <input value={contains} onChange={(e) => setContains(e.target.value)} placeholder="z. B. au" style={field} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button style={chip(withImage)} onClick={() => setWithImage((v) => !v)}>nur Wörter mit Bild</button>
+        <strong style={{ margin: '0 4px 0 12px' }}>Anzahl</strong>
+        {[10, 20, 30, 50].map((n) => <button key={n} style={chip(count === n)} onClick={() => setCount(n)}>{n}</button>)}
+      </div>
+      {state.message && <p style={{ margin: 0, color: 'var(--danger)' }}>{state.message}</p>}
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button style={btn(true)} onClick={load} disabled={state.busy}>{state.busy ? 'Wird geladen …' : 'Wörter holen'}</button>
+        <button style={btn()} onClick={onCancel}>Zurück</button>
+      </div>
     </div>
   );
 }
@@ -164,9 +285,11 @@ function ListForm({ own, save, error, onClose, current, onSelect }: {
 type Phase = 'idle' | 'ready' | 'show' | 'hidden' | 'revealed' | 'done';
 
 function Blitzlesen() {
-  const { lists, own, save, error } = useWordLists();
-  const [editing, setEditing] = useState(false);
-  const [listId, setListId] = useState(BUILT_IN_LISTS[0].id);
+  const source = useWordSource(BUILT_IN_LISTS[0].id);
+  const { own, save, error, words: sourceWords } = source;
+  const [view, setView] = useState<'settings' | 'edit' | 'dict'>('settings');
+  const editing = view !== 'settings';
+  const [showImage, setShowImage] = useState(true);
   const [duration, setDuration] = useState(800);
   const [auto, setAuto] = useState(false);
   const [random, setRandom] = useState(true);
@@ -179,7 +302,6 @@ function Blitzlesen() {
   const [currentDuration, setCurrentDuration] = useState(duration);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const list = lists.find((l) => l.id === listId) ?? BUILT_IN_LISTS[0];
   const clear = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
   useEffect(() => clear, []);
 
@@ -197,7 +319,7 @@ function Blitzlesen() {
   };
 
   const start = () => {
-    const words = list.words.map(toReadingWord);
+    const words = sourceWords;
     const order = random ? [...words].sort(() => Math.random() - 0.5) : words;
     setQueue(order);
     setCurrentDuration(duration);
@@ -234,15 +356,18 @@ function Blitzlesen() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  if (editing) {
-    return <ListEditor own={own} save={save} error={error} onClose={(id) => { setEditing(false); if (id) setListId(id); }} />;
+  if (view === 'edit') {
+    return <ListEditor own={own} save={save} error={error} onClose={(id) => { setView('settings'); if (id) source.setSelection(id); }} />;
+  }
+  if (view === 'dict' && source.filters) {
+    return <DictionaryPicker filters={source.filters} onCancel={() => setView('settings')} onLoaded={(label, w) => { source.applyDict(label, w); setView('settings'); }} />;
   }
 
   if (phase === 'idle' || phase === 'done') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         {phase === 'done' && <p style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700 }}>Geschafft! {queue.length} Wörter gelesen.</p>}
-        <ListPicker lists={lists} value={listId} onChange={setListId} onEdit={() => setEditing(true)} />
+        <ListPicker source={source} onEdit={() => setView('edit')} onDict={() => setView('dict')} />
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <strong>Anzeigedauer</strong>
           <input type="range" min={150} max={3000} step={50} value={duration} onChange={(e) => setDuration(Number(e.target.value))} style={{ flex: 1, minWidth: '160px' }} />
@@ -254,6 +379,7 @@ function Blitzlesen() {
           <button style={chip(display === 'colored')} onClick={() => setDisplay('colored')}>Silben farbig</button>
           <button style={chip(display === 'arcs')} onClick={() => setDisplay('arcs')}>Silbenbögen</button>
           <button style={chip(upper)} onClick={() => setUpper((u) => !u)}>GROSSBUCHSTABEN</button>
+          {sourceWords.some((w) => w.image) && <button style={chip(showImage)} onClick={() => setShowImage((v) => !v)}>Bild beim Auflösen</button>}
         </div>
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
           <strong style={{ marginRight: '4px' }}>Ablauf</strong>
@@ -264,9 +390,9 @@ function Blitzlesen() {
         </div>
         <div style={{ textAlign: 'center', padding: '10px', minHeight: '90px', borderRadius: '12px', background: 'rgba(59,130,246,0.06)' }}>
           <span style={{ fontSize: '0.8rem', opacity: 0.6, display: 'block' }}>Beispiel</span>
-          <Word word={toReadingWord(list.words[0] ?? 'Ba-na-ne')} style={display} upper={upper} size="3rem" />
+          <Word word={sourceWords[0] ?? toReadingWord('Ba-na-ne')} style={display} upper={upper} size="3rem" />
         </div>
-        <button style={{ ...btn(true), fontSize: '1.3rem', padding: '16px' }} onClick={start} disabled={list.words.length === 0}>
+        <button style={{ ...btn(true), fontSize: '1.3rem', padding: '16px' }} onClick={start} disabled={sourceWords.length === 0}>
           <Zap size={20} style={{ verticalAlign: 'middle' }} /> Blitzlesen starten
         </button>
       </div>
@@ -281,7 +407,16 @@ function Blitzlesen() {
         style={{ flex: 1, minHeight: '260px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '16px', background: '#ffffff', border: '2px solid var(--border)', cursor: 'pointer', color: '#0f172a', userSelect: 'none' }}
       >
         {phase === 'ready' && <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#94a3b8' }} />}
-        {(phase === 'show' || phase === 'revealed') && word && <Word word={word} style={display} upper={upper} size="clamp(3rem, 11vw, 9rem)" />}
+        {(phase === 'show' || phase === 'revealed') && word && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4%', justifyContent: 'center', width: '100%' }}>
+            {/* picture for self-checking, only after the word was read */}
+            {phase === 'revealed' && showImage && word.image && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={word.image} alt="" style={{ maxHeight: '220px', maxWidth: '32%', objectFit: 'contain', borderRadius: '12px' }} />
+            )}
+            <Word word={word} style={display} upper={upper} size="clamp(3rem, 11vw, 9rem)" />
+          </div>
+        )}
         {phase === 'hidden' && <span style={{ fontSize: '4rem', color: '#cbd5e1', fontWeight: 800 }}>?</span>}
       </div>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -290,7 +425,7 @@ function Blitzlesen() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button style={btn()} onClick={again} title="Taste A">Nochmal blitzen</button>
           {phase === 'hidden' && <button style={btn()} onClick={() => setPhase('revealed')}>Auflösen</button>}
-          {word && <button style={btn()} onClick={() => speak(word.text)}>Vorlesen</button>}
+          {word && <button style={btn()} onClick={() => playWord(word)}>Vorlesen</button>}
           <button style={btn(true)} onClick={next} title="Leertaste">Weiter</button>
           <button style={btn()} onClick={() => { clear(); setPhase('idle'); }}>Beenden</button>
         </div>
@@ -403,19 +538,23 @@ function AnlautRutsche() {
 
 // The syllables of a word slide together and form the word (Ba · na · ne → Banane)
 function WortRutsche() {
-  const { lists } = useWordLists();
-  const [listId, setListId] = useState(BUILT_IN_LISTS[1].id);
-  const list = lists.find((l) => l.id === listId) ?? BUILT_IN_LISTS[1];
-  const words = useMemo(() => list.words.map(toReadingWord).filter((w) => w.syllables.length > 1), [list]);
+  const source = useWordSource(BUILT_IN_LISTS[1].id);
+  const words = useMemo(() => source.words.filter((w) => w.syllables.length > 1), [source.words]);
   const [index, setIndex] = useState(0);
   const [joined, setJoined] = useState(false);
+  const [choosing, setChoosing] = useState(false);
   const word = words[index % Math.max(1, words.length)];
+  const restart = () => { setIndex(0); setJoined(false); };
 
-  if (!word) return <p>Diese Liste enthält keine mehrsilbigen Wörter.</p>;
+  if (choosing && source.filters) {
+    return <DictionaryPicker filters={source.filters} minSyllables={2} onCancel={() => setChoosing(false)} onLoaded={(label, w) => { source.applyDict(label, w); restart(); setChoosing(false); }} />;
+  }
+  const picker = <ListPicker source={source} onChange={restart} onDict={() => setChoosing(true)} />;
+  if (!word) return <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{picker}<p>Diese Liste enthält keine mehrsilbigen Wörter.</p></div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <ListPicker lists={lists} value={listId} onChange={(id) => { setListId(id); setIndex(0); setJoined(false); }} onEdit={() => window.alert('Eigene Listen bearbeitest du im Blitzlesen unter „Eigene Listen …“.')} />
+      {picker}
       <div style={{ minHeight: 280, borderRadius: '16px', background: '#ffffff', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0f172a', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: joined ? 0 : '1.2em', transition: 'gap 0.9s cubic-bezier(.3,.7,.2,1)' }}>
           {word.syllables.map((s, i) => (
@@ -437,7 +576,7 @@ function WortRutsche() {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
           {!joined
             ? <button style={btn(true)} onClick={() => setJoined(true)}><MoveDownRight size={16} style={{ verticalAlign: 'middle' }} /> Zusammenrutschen</button>
-            : <button style={btn()} onClick={() => speak(word.text)}>Vorlesen</button>}
+            : <button style={btn()} onClick={() => playWord(word)}>Vorlesen</button>}
           <button style={btn()} onClick={() => { setJoined(false); setIndex((i) => (i + 1) % words.length); }}>Nächstes Wort</button>
         </div>
       </div>
