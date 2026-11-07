@@ -5,6 +5,7 @@ import Toolbar from '@/components/Toolbar';
 import Sidebar from '@/components/Sidebar';
 import JournalSidebar from '@/components/JournalSidebar';
 import ClassroomTools from '@/components/ClassroomTools';
+import DeutschTools from '@/components/DeutschTools';
 
 const Whiteboard = dynamic(() => import('@/components/Whiteboard'), {
   ssr: false,
@@ -24,6 +25,7 @@ export default function Home() {
         <div style={{ flex: 1, position: 'relative' }}>
           <Whiteboard />
           <ClassroomTools />
+          <DeutschTools />
           <Toolbar />
         </div>
       </main>

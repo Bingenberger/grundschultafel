@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
-import { Timer, Ruler, Shuffle, Users, Dices, Volume2, Calculator, Music } from 'lucide-react';
+import { Timer, Ruler, Shuffle, Users, Dices, Volume2, Calculator, Music, Zap, MoveDownRight } from 'lucide-react';
 import { MATH_MENU, MUSIC_MENU } from '@/lib/mathManipulatives';
 
 interface ToolboxModalProps {
@@ -11,6 +11,7 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
   const triggerAddTimer = useWhiteboardStore((state) => state.triggerAddTimer);
   const triggerAddRuler = useWhiteboardStore((state) => state.triggerAddRuler);
   const setClassroomTool = useWhiteboardStore((state) => state.setClassroomTool);
+  const setDeutschTool = useWhiteboardStore((state) => state.setDeutschTool);
   const openTool = (tool: 'names' | 'groups' | 'dice' | 'noise') => {
     setClassroomTool(tool);
     onClose();
@@ -45,6 +46,8 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
           />
           <MenuButton icon={<Calculator size={18} />} label="Mathe" onClick={() => setView('math')} />
           <MenuButton icon={<Music size={18} />} label="Boomwhacker" onClick={() => setView('music')} />
+          <MenuButton icon={<Zap size={18} />} label="Blitzlesen" onClick={() => { setDeutschTool('blitz'); onClose(); }} />
+          <MenuButton icon={<MoveDownRight size={18} />} label="Silbenrutsche" onClick={() => { setDeutschTool('rutsche'); onClose(); }} />
           <MenuButton
             icon={<Ruler size={18} />}
             label="Lineal"

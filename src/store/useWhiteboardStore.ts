@@ -111,6 +111,9 @@ interface WhiteboardState {
   // Journal Sidebar
   // Floating classroom tools panel (not part of the notebook)
   classroomTool: ClassroomTool | null;
+  // German reading tools panel (Blitzlesen, Silbenrutsche)
+  deutschTool: 'blitz' | 'rutsche' | null;
+  setDeutschTool: (tool: 'blitz' | 'rutsche' | null) => void;
   setClassroomTool: (tool: ClassroomTool | null) => void;
 
   isJournalOpen: boolean;
@@ -271,6 +274,8 @@ export const useWhiteboardStore = create<WhiteboardState>((set, get) => ({
   renameNotebook: (newName: string) => set((state) => ({ notebookName: newName, revision: state.revision + 1 })),
 
   classroomTool: null,
+  deutschTool: null,
+  setDeutschTool: (deutschTool) => set({ deutschTool }),
   setClassroomTool: (classroomTool) => set({ classroomTool }),
 
   isJournalOpen: false,
