@@ -111,6 +111,63 @@ async function test(name,fn){await fn();console.log('PASS '+name);count++;}
   assert.match(result.stdout,/Existing accounts refused/);
   assert.equal(result.stdout.includes('password'),false);
  });
+ await test('gallery client speaks JSON-API v1 only, with token, limits and no redirects',async()=>{
+  const http=require('node:http');
+  const seen=[];
+  const item=(id,extra={})=>({id,description:'Ein Apfel',tags:['apfel','obst'],style:'aquarell',width:1200,height:900,
+    thumbnail_url:`/media/thumbnails/Apfel_${id}.webp`,display_url:`/media/display/Apfel_${id}.webp`,license:'CC0',...extra});
+  const server=http.createServer((req,res)=>{
+    seen.push({url:req.url,auth:req.headers.authorization});
+    const url=new URL(req.url,'http://x');
+    const json=(body,status=200,type='application/json')=>{res.writeHead(status,{'Content-Type':type});res.end(JSON.stringify(body));};
+    if(url.pathname==='/api/v1/images'){
+      if(url.searchParams.get('q')==='redirect'){res.writeHead(302,{Location:'http://169.254.169.254/'});return res.end();}
+      if(url.searchParams.get('q')==='html')return json('<html>',200,'text/html');
+      if(url.searchParams.get('q')==='huge'){res.writeHead(200,{'Content-Type':'application/json'});res.write('{"items":["');res.end('x'.repeat(3*1024*1024)+'"]}');return;}
+      if(url.searchParams.get('q')==='evil')return json({items:[item(1,{display_url:'/media/display/../../db/gallery.db'}),item(2,{thumbnail_url:'http://evil.example/a.webp'}),item(3)],total:3,total_pages:1});
+      return json({items:[item(7)],page:Number(url.searchParams.get('page')),per_page:Number(url.searchParams.get('per_page')),total:61,total_pages:2});
+    }
+    if(url.pathname==='/api/v1/tags')return json({tags:[{name:'apfel',count:7},{name:42,count:1}]});
+    if(url.pathname==='/media/display/Apfel_7.webp'){res.writeHead(200,{'Content-Type':'image/webp'});return res.end(Buffer.from('RIFF0000WEBP'));}
+    if(url.pathname==='/media/display/Svg_7.webp'){res.writeHead(200,{'Content-Type':'image/svg+xml'});return res.end('<svg/>');}
+    if(url.pathname==='/media/display/Weiter_7.webp'){res.writeHead(301,{Location:'/media/display/Apfel_7.webp'});return res.end();}
+    json({error:'no'},404);
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const tokenFile=path.join(temporary,'gallery-token');fs.writeFileSync(tokenFile,'t'.repeat(43)+'\n');
+  const galleryModule=require.resolve('../src/lib/gallery-client.cjs');
+  const load=(env)=>{delete require.cache[galleryModule];Object.assign(process.env,env);const g=require(galleryModule);g.resetForTests();return g;};
+  try {
+    let gallery=load({GALLERY_ORIGIN:'',GALLERY_TOKEN_FILE:''});
+    assert.equal(gallery.enabled(),false);
+    await assert.rejects(gallery.search({q:'apfel'}),/unavailable/);
+    gallery=load({GALLERY_ORIGIN:'http://127.0.0.1:'+server.address().port,GALLERY_TOKEN_FILE:tokenFile});
+    assert.equal(gallery.enabled(),true);
+    const result=await gallery.search({q:' apfel ',tags:['obst','','x'.repeat(80)],page:2,perPage:500});
+    assert.equal(seen.at(-1).url,'/api/v1/images?q=apfel&tags=obst%2C'+'x'.repeat(50)+'&page=2&per_page=60');
+    assert.equal(seen.at(-1).auth,'Bearer '+'t'.repeat(43));
+    assert.deepEqual(result,{items:[{id:7,description:'Ein Apfel',tags:['apfel','obst'],style:'aquarell',width:1200,height:900,license:'CC0',
+      thumbnailUrl:'/api/gallery/image?path=%2Fmedia%2Fthumbnails%2FApfel_7.webp',displayUrl:'/api/gallery/image?path=%2Fmedia%2Fdisplay%2FApfel_7.webp'}],
+      total:61,page:2,pageSize:60,totalPages:2});
+    assert.deepEqual((await gallery.search({q:'evil'})).items.map(i=>i.id),[3]);
+    await assert.rejects(gallery.search({q:'redirect'}));
+    await assert.rejects(gallery.search({q:'html'}),/JSON/);
+    await assert.rejects(gallery.search({q:'huge'}),/too large/);
+    assert.deepEqual(await gallery.tags('ap'),[{name:'apfel',count:7}]);
+    const picture=await gallery.image('/media/display/Apfel_7.webp');
+    assert.equal(picture.type,'image/webp');assert.equal(Buffer.from(picture.body).toString(),'RIFF0000WEBP');
+    for(const bad of ['/static/display/Apfel_7.webp','/media/display/../x.webp','/media/uploads/Apfel_7.png','/media/display/a.svg',
+      'http://evil.example/media/display/a.webp','//evil.example/media/display/a.webp','/media/display/%2e%2e.webp',''])
+      await assert.rejects(gallery.image(bad),e=>e.status===400,bad);
+    await assert.rejects(gallery.image('/media/display/Svg_7.webp'),e=>e.status===415);
+    await assert.rejects(gallery.image('/media/display/Weiter_7.webp'));
+    await assert.rejects(gallery.image('/media/display/Fehlt_7.webp'),e=>e.status===404);
+    gallery=load({GALLERY_ORIGIN:'http://127.0.0.1:'+server.address().port,GALLERY_TOKEN_FILE:''});
+    await gallery.search({});assert.equal(seen.at(-1).auth,undefined);
+    gallery=load({GALLERY_ORIGIN:'http://user:pw@127.0.0.1:1/',GALLERY_TOKEN_FILE:''});
+    assert.equal(gallery.enabled(),false);
+  } finally {server.close();delete process.env.GALLERY_ORIGIN;delete process.env.GALLERY_TOKEN_FILE;}
+ });
  console.log('PASS '+count+' file-runtime contracts');
  }finally{fs.rmSync(temporary,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

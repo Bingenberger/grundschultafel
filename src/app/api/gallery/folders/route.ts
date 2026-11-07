@@ -1,10 +1,12 @@
 export const dynamic='force-dynamic';
 import * as store from '@/lib/file-store.cjs';
 import { NextResponse } from 'next/server';
+import { getSession } from '@/lib/session';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 export async function GET() {
+  if (!(await getSession())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   try {
     const galleryDir = path.join(store.assetDir(), 'gallery');
 

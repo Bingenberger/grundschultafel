@@ -88,8 +88,13 @@ Maximal 20 offene Tickets pro Lehrkraft, global 2000; 200 Dateien / 100 MiB je
 Lehrkraft. Verbrauchte Bilddateien verbleiben für Referenzen, keine automatische
 Löschung alter Unterrichtsdateien. QR-Zugänge gehören nicht hinter zusätzliche Anmeldung.
 
-GALLERY_ORIGIN ist standardmäßig leer; externe Galerie dann 503. Bei expliziter
-Aktivierung nur die konfigurierte Origin, keine Redirects, Zeit-/Größenlimits.
+GALLERY_ORIGIN (z. B. https://bilder.example.org) bindet die Bildergalerie über ihre JSON-API v1 an
+(/api/v1/images, /api/v1/tags; Vertrag in API.md der Galerie). Es wird kein HTML ausgelesen. Die Tafel
+holt Suche und Bilder serverseitig ab (nur angemeldete Lehrkräfte), Bilder nur unter /media/thumbnails/
+und /media/display/ mit geprüftem Content-Type, keine Redirects, 6 s Zeitlimit, Größenlimits.
+GALLERY_TOKEN_FILE (optional) enthält ein Bearer-Token für eine nicht öffentliche Galerie; die
+Plattform setzt es nur für ihre eigene Galerie. Eingefügte Bilder werden zu Data-URLs im Heft, Hefte
+hängen also nicht von der Galerie ab. Leer = aus (503), der Galerie-Reiter zeigt dann einen Hinweis.
 WOERTERBUCH_ORIGIN (z. B. https://woerterbuch.example.org) bindet das Grundschul-Wörterbuch
 (gswb) für Blitzlesen und Silbenrutsche an: Wortlisten (/api/words), Bilder und Töne holt die
 Tafel serverseitig ab, nur Pfade unter /static/images und /static/audio, keine Redirects,

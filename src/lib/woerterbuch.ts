@@ -24,5 +24,6 @@ export async function fetchWoerterbuch(url:URL,limit:number){
 }
 
 // Media paths of the dictionary are served through /api/woerterbuch/media
-export const MEDIA_PATH=/^\/static\/(images|audio)\/[^/?#]+$/;
+// No encoded or dotted segments: URL parsing would resolve %2e%2e and .. to other paths
+export const MEDIA_PATH=/^\/static\/(images|audio)\/(?!\.)[^/?#%\\]+$/;
 export const mediaProxyUrl=(path:string|null|undefined)=>path&&MEDIA_PATH.test(path)?`/api/woerterbuch/media?path=${encodeURIComponent(path)}`:null;

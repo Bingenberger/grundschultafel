@@ -1,115 +1,40 @@
-import {boundedBody} from './platform';
-export type GalleryAssetKind = 'display' | 'thumbnails';
+// Server-side access to the Bildergalerie JSON-API v1 (implementation in gallery-client.cjs,
+// which the runtime contract tests exercise directly). Disabled (503) unless GALLERY_ORIGIN is set.
+import * as client from './gallery-client.cjs';
 
-export interface GallerySearchItem {
+export interface GalleryItem {
   id: number;
-  filename: string;
-  description: string | null;
+  description: string;
   tags: string[];
+  style: string | null;
+  width: number | null;
+  height: number | null;
+  license: string;
   thumbnailUrl: string;
   displayUrl: string;
 }
 
-export const GALLERY_ORIGIN = process.env.GALLERY_ORIGIN || '';
-
-function htmlDecode(value: string) {
-  return value
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&uuml;/g, 'ü')
-    .replace(/&Uuml;/g, 'Ü')
-    .replace(/&ouml;/g, 'ö')
-    .replace(/&Ouml;/g, 'Ö')
-    .replace(/&auml;/g, 'ä')
-    .replace(/&Auml;/g, 'Ä')
-    .replace(/&szlig;/g, 'ß')
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+export interface GalleryPage {
+  items: GalleryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
-function stripTags(value: string) {
-  return htmlDecode(value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+export const galleryEnabled = (): boolean => client.enabled();
+
+export function searchGallery(options: { q?: string; tags?: string[]; page?: number; perPage?: number }): Promise<GalleryPage> {
+  return client.search(options);
 }
 
-function buildSearchUrl(query: string, page: number) {
-  const url = new URL('/', GALLERY_ORIGIN);
-  if (query) {
-    url.searchParams.set('search', query);
-  }
-  if (page > 1) {
-    url.searchParams.set('page', String(page));
-  }
-  return url.toString();
+export function galleryTags(prefix: string): Promise<{ name: string; count: number }[]> {
+  return client.tags(prefix);
 }
 
-function extractTotalPages(html: string, currentPage: number) {
-  const matches = [...html.matchAll(/href="\/\?page=(\d+)[^"]*"/g)].map((match) => Number(match[1]));
-  return Math.max(currentPage, 1, ...matches);
+export function galleryImage(path: string): Promise<{ type: string; body: Uint8Array }> {
+  return client.image(path);
 }
 
-function parseGalleryItems(html: string): GallerySearchItem[] {
-  const items: GallerySearchItem[] = [];
-
-  // Split HTML into per-modal blocks (class now includes "detail-modal")
-  const modalRegex = /<div class="modal fade[^"]*" id="imgModal(\d+)"([\s\S]*?)(?=<div class="modal fade[^"]*" id="imgModal|\s*<\/body|$)/g;
-
-  for (const match of html.matchAll(modalRegex)) {
-    const id = Number(match[1]);
-    const block = match[2];
-
-    const imgMatch = block.match(/src="([^"]*\/static\/display\/[^"]+)"/);
-    if (!imgMatch) continue;
-
-    const displayPath = htmlDecode(imgMatch[1]);
-    const filename = displayPath.split('/').pop() || `image-${id}.webp`;
-    const thumbnailPath = displayPath.replace('/static/display/', '/static/thumbnails/');
-
-    // Description is in first <em> inside detail-meta-pane
-    const descMatch = block.match(/<div class="detail-meta-pane"[\s\S]*?<em>([\s\S]*?)<\/em>/);
-    const description = descMatch ? stripTags(descMatch[1]) : null;
-
-    // Tags: only <a> elements with bg-secondary badge class (excludes <span> style/AI badges)
-    const tags = [...block.matchAll(/class="badge[^"]*bg-secondary[^"]*"[^>]*>([^<]+)<\/a>/g)]
-      .map(m => stripTags(m[1]))
-      .filter(Boolean);
-
-    items.push({
-      id,
-      filename,
-      description,
-      tags,
-      thumbnailUrl: `/api/gallery/image?src=${encodeURIComponent(new URL(thumbnailPath, GALLERY_ORIGIN).toString())}`,
-      displayUrl: `/api/gallery/image?src=${encodeURIComponent(new URL(displayPath, GALLERY_ORIGIN).toString())}`,
-    });
-  }
-
-  return items;
-}
-
-export async function searchGallery(query: string, page: number) {
-  if(!GALLERY_ORIGIN)throw new Error('Gallery unavailable');
-  const res = await fetch(buildSearchUrl(query.trim(), page), {
-    headers: {
-      'User-Agent': 'TafelPopafel/1.0'
-    },
-    cache: 'no-store', redirect:'error', signal:AbortSignal.timeout(5000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Galerie-Suche fehlgeschlagen: ${res.status}`);
-  }
-
-  const html = new TextDecoder().decode(await boundedBody(res as any,16*1024*1024));
-  const items = parseGalleryItems(html);
-  const totalPages = extractTotalPages(html, page);
-
-  return {
-    items,
-    total: items.length,
-    page,
-    pageSize: items.length,
-    totalPages,
-  };
-}
+export const statusOf = (error: unknown): number | undefined =>
+  typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;

@@ -5,9 +5,12 @@ import { Search, X, ImagePlus, Upload, ChevronLeft, ChevronRight, Tags, Folder, 
 
 interface GalleryItem {
   id: number;
-  filename: string;
-  description: string | null;
+  description: string;
   tags: string[];
+  style: string | null;
+  width: number | null;
+  height: number | null;
+  license: string;
   thumbnailUrl: string;
   displayUrl: string;
 }
@@ -37,6 +40,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
   const [folders, setFolders] = useState<LocalFolder[]>([]);
   const [activeSource, setActiveSource] = useState<string>('pix');
   const [query, setQuery] = useState('');
+  const [activeTags, setActiveTags] = useState<string[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -106,7 +110,8 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
     setLoadingPix(true);
     setError(null);
 
-    fetch(`/api/gallery?q=${encodeURIComponent(query)}&page=${page}&pageSize=36`)
+    const tagParam = activeTags.length ? `&tags=${encodeURIComponent(activeTags.join(','))}` : '';
+    fetch(`/api/gallery?q=${encodeURIComponent(query)}${tagParam}&page=${page}&pageSize=36`)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error('Galerie konnte nicht geladen werden');
@@ -116,8 +121,10 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
       .then((data) => {
         if (isCancelled) return;
         setPixItems(data.items || []);
-        setTotalPages(data.totalPages || 1);
+        setTotalPages(Math.max(1, data.totalPages || 1));
         setTotal(data.total || 0);
+        // Server clamps the page; follow it when the result shrank (e.g. a new filter)
+        if (data.page && data.totalPages && page > data.totalPages) setPage(data.totalPages);
       })
       .catch((err) => {
         if (isCancelled) return;
@@ -133,7 +140,16 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
     return () => {
       isCancelled = true;
     };
-  }, [isOpen, query, page, activeSource]);
+  }, [isOpen, query, page, activeSource, activeTags]);
+
+  const addTag = (tag: string) => {
+    setActiveTags((current) => (current.includes(tag) ? current : [...current, tag].slice(0, 5)));
+    setPage(1);
+  };
+  const removeTag = (tag: string) => {
+    setActiveTags((current) => current.filter((t) => t !== tag));
+    setPage(1);
+  };
 
   if (!isOpen) return null;
 
@@ -141,6 +157,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
   const canGoForward = page < totalPages;
   const isPixMode = activeSource === 'pix';
   const localImages = activeFolder?.images || [];
+  const licenseNote = pixItems.find((item) => item.license)?.license || '';
 
   return (
     <div
@@ -184,7 +201,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
               style={sourceButtonStyle(activeSource === 'pix')}
             >
               <Globe size={18} />
-              Suche bei pix
+              Bildergalerie
             </button>
 
             {loadingFolders ? (
@@ -258,7 +275,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
                 </h2>
                 <div style={{ fontSize: '0.9rem', color: 'var(--foreground)', opacity: 0.72 }}>
                   {isPixMode
-                    ? query ? `${total} Treffer fur "${query}"` : 'Suche in pix.foerster.rocks'
+                    ? query || activeTags.length ? `${total} Treffer` : `${total} Bilder in der Bildergalerie`
                     : `${localImages.length} lokale Bilder`}
                 </div>
               </div>
@@ -298,7 +315,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
                   ref={searchInputRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="Suche nach Tags, Beschreibung oder Dateiname"
+                  placeholder="Suche nach Schlagwort, Beschreibung oder Stil"
                   style={{
                     flex: 1,
                     border: 'none',
@@ -309,6 +326,16 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
                   }}
                 />
               </div>
+
+              {activeTags.length ? (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {activeTags.map((tag) => (
+                    <button key={tag} onClick={() => removeTag(tag)} style={activeTagStyle} title="Filter entfernen">
+                      {tag} <X size={12} />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
                 <button
@@ -340,6 +367,8 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
             padding: '20px 22px',
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+            // Rows as tall as their cards; otherwise the fixed-height scroll area squeezes them
+            gridAutoRows: 'max-content',
             gap: '18px',
             alignContent: 'start'
           }}>
@@ -354,6 +383,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
                 pixItems.map((item) => (
                   <button
                     key={`pix-${item.id}`}
+                    data-gallery-item={item.id}
                     onClick={() => {
                       onSelectImage(item.displayUrl);
                       onClose();
@@ -366,7 +396,7 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
                     <div style={previewStyle}>
                       <img
                         src={item.thumbnailUrl}
-                        alt={item.description || item.filename}
+                        alt={item.description || `Bild ${item.id}`}
                         style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center center', display: 'block', margin: 'auto' }}
                         draggable={false}
                       />
@@ -374,16 +404,35 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
 
                     <div style={{ padding: '12px 12px 14px', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <div style={titleStyle}>
-                        {item.description?.trim() || item.filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ')}
+                        {item.tags[0] || item.description?.trim() || `Bild ${item.id}`}
                       </div>
                       <div style={descriptionStyle}>
                         {item.description?.trim() || ' '}
                       </div>
                       <div style={tagLineStyle}>
                         <Tags size={14} />
-                        <span style={tagTextStyle}>
-                          {item.tags.slice(0, 3).join(', ') || 'Keine Tags'}
-                        </span>
+                        {item.tags.length ? (
+                          <span style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', overflow: 'hidden', maxHeight: '22px' }}>
+                            {item.tags.slice(0, 4).map((tag) => (
+                              <span
+                                key={tag}
+                                role="button"
+                                tabIndex={0}
+                                data-gallery-tag={tag}
+                                onClick={(e) => { e.stopPropagation(); addTag(tag); }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); addTag(tag); }
+                                }}
+                                style={tagChipStyle}
+                                title={`Nach „${tag}“ filtern`}
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span style={tagTextStyle}>Keine Schlagworte</span>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -416,6 +465,11 @@ export default function GalleryModal({ isOpen, onClose, onSelectImage, onUploadC
               ))
             )}
           </div>
+          {isPixMode && licenseNote ? (
+            <div style={{ padding: '10px 22px', borderTop: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--foreground)', opacity: 0.72 }}>
+              Lizenz: {licenseNote}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -516,6 +570,30 @@ const tagTextStyle: React.CSSProperties = {
   whiteSpace: 'nowrap'
 };
 
+const tagChipStyle: React.CSSProperties = {
+  border: '1px solid var(--border)',
+  background: 'var(--background)',
+  color: 'var(--foreground)',
+  borderRadius: '999px',
+  padding: '1px 8px',
+  fontSize: '0.72rem',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap'
+};
+
+const activeTagStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '4px',
+  border: 'none',
+  background: 'var(--primary)',
+  color: 'white',
+  borderRadius: '999px',
+  padding: '6px 10px',
+  fontSize: '0.85rem',
+  cursor: 'pointer'
+};
+
 const messageStyle: React.CSSProperties = {
   gridColumn: '1 / -1',
   textAlign: 'center',
@@ -524,13 +602,13 @@ const messageStyle: React.CSSProperties = {
   padding: '48px 0'
 };
 
-function cardMouseEnter(e: React.MouseEvent<HTMLButtonElement>) {
+function cardMouseEnter(e: React.MouseEvent<HTMLElement>) {
   e.currentTarget.style.transform = 'translateY(-2px)';
   e.currentTarget.style.borderColor = 'var(--primary)';
   e.currentTarget.style.boxShadow = '0 14px 28px rgba(15,23,42,0.14)';
 }
 
-function cardMouseLeave(e: React.MouseEvent<HTMLButtonElement>) {
+function cardMouseLeave(e: React.MouseEvent<HTMLElement>) {
   e.currentTarget.style.transform = 'translateY(0)';
   e.currentTarget.style.borderColor = 'var(--border)';
   e.currentTarget.style.boxShadow = '0 8px 24px rgba(15,23,42,0.08)';
