@@ -6,7 +6,8 @@ import { useWhiteboardStore, ToolType } from '@/store/useWhiteboardStore';
 import { Play, Pause, RotateCcw, Eye, EyeOff, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, Rows3 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { BACKGROUND_TEMPLATES } from '@/lib/backgroundTemplates';
-import { createMathItems, handleMathTap, toLocal, LearningClock, snapCounterToFields, piecesOnField, isRotatablePiece } from '@/lib/mathManipulatives';
+import { BoomwhackerScore, playTubes, SCORE_PRESETS, perRowOf, type ScoreData } from '@/lib/boomwhacker';
+import { createMathItems, handleMathTap, toLocal, LearningClock, snapCounterToFields, piecesOnField, isRotatablePiece, dienesPiece, createDienes, DIENES_UNIT } from '@/lib/mathManipulatives';
 
 interface YoutubeRect {
   id: string; // The fabric object ID or reference
@@ -544,11 +545,14 @@ export default function Whiteboard() {
   // resized. Small pieces (counters, cards, cubes, coins) keep their size so sets stay consistent.
   const decorateMathObject = (obj: fabric.Object) => {
     const kind = (obj as any).mathKind as string;
-    const resizable = kind === 'field' || kind === 'abacus' || kind === 'clock' || (kind === 'money' && obj.width > 150);
+    const resizable = kind === 'field' || kind === 'abacus' || kind === 'clock' || kind === 'score' || (kind === 'money' && obj.width > 150);
     const defaults = fabric.controlsUtils.createObjectDefaultControls();
     obj.controls = {
       ...(resizable ? { br: defaults.br } : {}),
       ...(isRotatablePiece(obj) ? { rotate90Control: createRotate90Control() } : {}),
+      ...(dienesPiece(obj) === 'ten' || dienesPiece(obj) === 'hundred'
+        ? { unbundleControl: createLabelControl('Entbündeln', '#ea580c', (target) => void unbundleDienes(target)) }
+        : {}),
       duplicateControl: createDuplicateControl(),
       deleteControl: createSmallDeleteControl((target, c) => {
         c.remove(target);
@@ -597,6 +601,146 @@ export default function Whiteboard() {
       ctx.restore();
     },
   });
+
+  // Pill-shaped button below an object/selection (Bündeln / Entbündeln)
+  const createLabelControl = (label: string, color: string, onTap: (target: fabric.Object) => void) => {
+    const width = Math.max(110, label.length * 8.5 + 24);
+    return new fabric.Control({
+      x: 0,
+      y: 0.5,
+      // always centred below the visible outline, also for a Zehnerstange turned by 90°
+      positionHandler: (_dim: any, _matrix: any, target: fabric.Object) => {
+        const b = target.getBoundingRect();
+        const v = target.canvas?.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+        return new fabric.Point((b.left + b.width / 2) * v[0] + v[4], (b.top + b.height) * v[3] + v[5] + 30);
+      },
+      cursorStyle: 'pointer',
+      sizeX: width,
+      sizeY: 34,
+      touchSizeX: width,
+      touchSizeY: 40,
+      mouseUpHandler: (_eventData: any, transform: any) => {
+        onTap(transform.target as fabric.Object);
+        return true;
+      },
+      render: (ctx: CanvasRenderingContext2D, left: number, top: number) => {
+        ctx.save();
+        ctx.translate(left, top);
+        ctx.beginPath();
+        ctx.roundRect(-width / 2, -16, width, 32, 16);
+        ctx.fillStyle = color;
+        ctx.shadowColor = 'rgba(0,0,0,0.25)';
+        ctx.shadowBlur = 6;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 15px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, 0, 1);
+        ctx.restore();
+      },
+    });
+  };
+
+  // Short slide animation for several objects at once (ease-out)
+  const slideTo = (moves: { obj: fabric.Object; left: number; top: number }[], ms = 380) =>
+    new Promise<void>((resolve) => {
+      const canvas = fabricRef.current;
+      const from = moves.map((m) => ({ left: m.obj.left, top: m.obj.top }));
+      const start = performance.now();
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / ms);
+        const e = 1 - (1 - t) ** 3;
+        moves.forEach((m, i) => m.obj.set({ left: from[i].left + (m.left - from[i].left) * e, top: from[i].top + (m.top - from[i].top) * e }));
+        canvas?.requestRenderAll();
+        if (t < 1) requestAnimationFrame(step);
+        else { moves.forEach((m) => m.obj.setCoords()); resolve(); }
+      };
+      requestAnimationFrame(step);
+    });
+
+  const selectPieces = (canvas: fabric.Canvas, pieces: fabric.Object[]) => {
+    if (pieces.length === 1) canvas.setActiveObject(pieces[0]);
+    else if (pieces.length > 1) canvas.setActiveObject(new fabric.ActiveSelection(pieces, { canvas }));
+  };
+
+  // 10 Einer → 1 Zehner (or 10 Zehner → 1 Hunderter): the pieces slide together, then they
+  // are exchanged. With 23 Einer selected, 2 Zehner are formed and 3 Einer remain.
+  const bundleDienes = async (selection: fabric.ActiveSelection) => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    const pieces = selection.getObjects();
+    canvas.discardActiveObject(); // pieces report canvas positions again
+    const ones = pieces.filter((o) => dienesPiece(o) === 'one');
+    const tens = pieces.filter((o) => dienesPiece(o) === 'ten');
+    const [source, result] = ones.length >= 10 ? [ones, 'ten' as const] : [tens, 'hundred' as const];
+    if (source.length < 10) return;
+    // reading order, so the pieces that look "first" are bundled first
+    source.sort((a, b) => Math.round(a.top / 25) - Math.round(b.top / 25) || a.left - b.left);
+    const created: fabric.Object[] = [];
+    const used = new Set<fabric.Object>();
+    for (let g = 0; g + 10 <= source.length; g += 10) {
+      const group = source.slice(g, g + 10);
+      const scale = group[0].scaleX || 1;
+      const u = DIENES_UNIT * scale;
+      if (result === 'hundred') {
+        // Zehner turned by 90° stand upright again before they are laid side by side
+        group.forEach((o) => {
+          if (o.angle) { const c = o.getCenterPoint(); o.rotate(0); o.setPositionByOrigin(c, 'center', 'center'); o.setCoords(); }
+        });
+      }
+      const boxes = group.map((o) => o.getBoundingRect());
+      const x0 = Math.min(...boxes.map((b) => b.left));
+      const y0 = Math.min(...boxes.map((b) => b.top));
+      const wide = Math.max(...boxes.map((b) => b.left + b.width)) - x0 > Math.max(...boxes.map((b) => b.top + b.height)) - y0;
+      const horizontal = result === 'hundred' || wide;
+      await slideTo(group.map((o, i) => ({ obj: o, left: horizontal ? x0 + i * u : x0, top: horizontal ? y0 : y0 + i * u })));
+      const piece = createDienes(result);
+      piece.set({ scaleX: scale, scaleY: scale, left: x0, top: y0 });
+      if (result === 'ten' && wide) {
+        piece.rotate(90);
+        piece.setPositionByOrigin(new fabric.Point(x0 + 5 * u, y0 + u / 2), 'center', 'center');
+      }
+      (piece as any).id = uuidv4();
+      decorateMathObject(piece);
+      group.forEach((o) => { canvas.remove(o); used.add(o); });
+      canvas.add(piece);
+      created.push(piece);
+      cancelScheduledCommit(); // one history entry at the end, not halfway through the animation
+    }
+    selectPieces(canvas, [...created, ...pieces.filter((o) => !used.has(o))]);
+    canvas.requestRenderAll();
+    commitCanvas();
+  };
+
+  // 1 Zehner → 10 Einer, 1 Hunderter → 10 Zehner: the parts slide apart a little
+  const unbundleDienes = async (obj: fabric.Object) => {
+    const canvas = fabricRef.current;
+    const piece = dienesPiece(obj);
+    if (!canvas || (piece !== 'ten' && piece !== 'hundred')) return;
+    const scale = obj.scaleX || 1;
+    const u = DIENES_UNIT * scale;
+    const gap = 10 * scale;
+    const box = obj.getBoundingRect();
+    const lying = piece === 'ten' && Math.round(obj.angle || 0) % 180 === 90;
+    const parts = Array.from({ length: 10 }, () => createDienes(piece === 'ten' ? 'one' : 'ten'));
+    canvas.discardActiveObject();
+    canvas.remove(obj);
+    parts.forEach((p, i) => {
+      const along = piece === 'hundred' || lying;
+      p.set({ scaleX: scale, scaleY: scale, left: along ? box.left + i * u : box.left, top: along ? box.top : box.top + i * u });
+      (p as any).id = uuidv4();
+      decorateMathObject(p);
+      canvas.add(p);
+    });
+    cancelScheduledCommit(); // one history entry at the end, not halfway through the animation
+    const along = piece === 'hundred' || lying;
+    await slideTo(parts.map((p, i) => ({ obj: p, left: along ? box.left + i * (u + gap) : box.left, top: along ? box.top : box.top + i * (u + gap) })));
+    selectPieces(canvas, parts);
+    canvas.requestRenderAll();
+    commitCanvas();
+  };
 
   // Green "+" in the top-left corner: copies the piece (or the whole selection).
   const createDuplicateControl = () => new fabric.Control({
@@ -1914,7 +2058,12 @@ export default function Whiteboard() {
       if (!(active instanceof fabric.ActiveSelection)) return;
       const objects = active.getObjects();
       if (objects.length === 0 || !objects.every((o) => (o as any).mathKind)) return;
+      const ones = objects.filter((o) => dienesPiece(o) === 'one').length;
+      const tens = objects.filter((o) => dienesPiece(o) === 'ten').length;
       active.controls = {
+        ...(ones >= 10 || tens >= 10
+          ? { bundleControl: createLabelControl(ones >= 10 ? 'Bündeln: 10 Einer → 1 Zehner' : 'Bündeln: 10 Zehner → 1 Hunderter', '#16a34a', (target) => void bundleDienes(target as fabric.ActiveSelection)) }
+          : {}),
         duplicateControl: createDuplicateControl(),
         deleteControl: createSmallDeleteControl((target, c) => {
           const pieces = (target as fabric.ActiveSelection).getObjects();
@@ -2134,6 +2283,7 @@ export default function Whiteboard() {
 
     if (!pageChanged && !notebookLoaded) return;
     resetViewport(); // every page starts with the normal, unzoomed view
+    stopScore();
 
     // Reset full history when a new notebook is loaded
     if (notebookLoaded) {
@@ -2471,6 +2621,68 @@ export default function Whiteboard() {
   }, [fabricCanvas, currentPageId, updatePageData, activeTool]);
 
   // Update Overlay positions
+  // --- Boomwhacker score: playback with moving cursor and sound -------------------------
+  const [scoreUi, setScoreUi] = useState<{ score: BoomwhackerScore; rect: { left: number; top: number; width: number; height: number } } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const playingScore = useRef<BoomwhackerScore | null>(null);
+  const playCol = useRef(0);
+  const playTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopScore = () => {
+    if (playTimer.current) clearInterval(playTimer.current);
+    playTimer.current = null;
+    if (playingScore.current) playingScore.current.playhead = null;
+    playingScore.current = null;
+    setIsPlaying(false);
+    fabricRef.current?.requestRenderAll();
+  };
+  const startScore = (score: BoomwhackerScore, fromCol = 0) => {
+    if (playTimer.current) clearInterval(playTimer.current);
+    playingScore.current = score;
+    playCol.current = fromCol;
+    setIsPlaying(true);
+    const beatMs = 60000 / score.mathData.bpm;
+    const tick = () => {
+      const current = playingScore.current;
+      const canvas = fabricRef.current;
+      // stop if the score was deleted or replaced (undo, page switch)
+      if (!current || !canvas || !canvas.getObjects().includes(current)) { stopScore(); return; }
+      if (playCol.current >= current.mathData.beats) {
+        if (current.mathData.loop) playCol.current = 0;
+        else { stopScore(); return; }
+      }
+      current.playhead = playCol.current;
+      playTubes(current.notesAt(playCol.current), Math.min(0.6, (beatMs / 1000) * 0.9));
+      canvas.requestRenderAll();
+      playCol.current++;
+    };
+    tick();
+    playTimer.current = setInterval(tick, beatMs);
+  };
+  const updateScore = (score: BoomwhackerScore, patch: Partial<ScoreData>) => {
+    score.update({ ...score.mathData, ...patch });
+    // a longer song must stay completely visible: shrink it to the visible area if needed
+    // (the control bar below it needs about 70 px)
+    const canvas = fabricRef.current;
+    if (canvas) {
+      const v = canvas.viewportTransform;
+      const visibleRight = ((canvas.width || 800) - 16 - v[4]) / v[0];
+      const visibleBottom = ((canvas.height || 600) - 150 - v[5]) / v[3];
+      const fitW = (visibleRight - score.left) / score.width;
+      const fitH = (visibleBottom - score.top) / score.height;
+      const fit = Math.min(fitW, fitH);
+      if (fit < score.scaleX && fit > 0) {
+        const scale = Math.max(0.3, fit);
+        score.set({ scaleX: scale, scaleY: scale });
+        score.setCoords();
+      }
+    }
+    fabricRef.current?.requestRenderAll();
+    commitCanvas(true); // score data lives in mathData, no Fabric event
+    if (patch.bpm && playingScore.current === score) startScore(score, playCol.current);
+  };
+  useEffect(() => () => { if (playTimer.current) clearInterval(playTimer.current); }, []);
+
   useEffect(() => {
     if (!fabricCanvas) return;
 
@@ -2507,6 +2719,11 @@ export default function Whiteboard() {
 
       setYoutubeVideos(videos);
       setTimers(newTimers);
+
+      // controls below the selected (or playing) Boomwhacker score
+      const active = fabricCanvas.getActiveObject();
+      const score = playingScore.current ?? (active instanceof BoomwhackerScore ? active : null);
+      setScoreUi(score && objects.includes(score) ? { score, rect: screenRect(score, fabricCanvas) } : null);
     };
 
     fabricCanvas.on('after:render', updateOverlays);
@@ -2878,6 +3095,17 @@ export default function Whiteboard() {
       ))}
 
       {/* Timer Overlays */}
+      {scoreUi && (
+        <ScoreControls
+          ui={scoreUi}
+          boardHeight={fabricCanvas?.height || 600}
+          playing={isPlaying && playingScore.current === scoreUi.score}
+          onPlay={() => startScore(scoreUi.score)}
+          onStop={stopScore}
+          onChange={(patch) => updateScore(scoreUi.score, patch)}
+        />
+      )}
+
       {timers.map((timer, index) => (
         <TimerOverlay
           key={`${timer.timerType}-${index}`}
@@ -3013,3 +3241,70 @@ const formatBtnStyle: React.CSSProperties = {
   color: 'var(--foreground)',
   transition: 'background-color 0.1s'
 };
+
+// Control bar below a Boomwhacker score
+const RESERVED_BELOW = 170; // control bar + the app's tool bar at the bottom
+function ScoreControls({ ui, boardHeight, playing, onPlay, onStop, onChange }: {
+  ui: { score: BoomwhackerScore; rect: { left: number; top: number; width: number; height: number } };
+  boardHeight: number;
+  playing: boolean;
+  onPlay: () => void;
+  onStop: () => void;
+  onChange: (patch: Partial<ScoreData>) => void;
+}) {
+  const data = ui.score.mathData;
+  const button = (active = false): React.CSSProperties => ({
+    padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)', cursor: 'pointer', fontWeight: 700,
+    background: active ? 'var(--primary)' : 'var(--surface)', color: active ? 'white' : 'var(--foreground)', fontSize: '0.9rem',
+  });
+  const resize = (beats: number) => {
+    const cells = data.cells.filter((k) => Number(k.split(':')[1]) < beats);
+    onChange({ beats, cells, lyrics: data.lyrics?.slice(0, beats) });
+  };
+  return (
+    <div
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute', zIndex: 30, left: '50%', transform: 'translateX(-50%)', width: 'max-content',
+        // below the score if there is room above the tool bar, otherwise above it, else at the top
+        ...(ui.rect.top + ui.rect.height + RESERVED_BELOW < boardHeight
+          ? { top: ui.rect.top + ui.rect.height + 10 }
+          : ui.rect.top > 130
+            ? { bottom: boardHeight - ui.rect.top + 10 }
+            : { top: 12 }),
+        display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', padding: '8px', borderRadius: '14px',
+        background: 'var(--surface)', color: 'var(--foreground)', border: '1px solid var(--border)', boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+        maxWidth: 'calc(100% - 16px)',
+      }}
+    >
+      {playing
+        ? <button style={{ ...button(true), background: 'var(--danger)', border: 'none' }} onClick={onStop}>■ Stopp</button>
+        : <button style={{ ...button(true), border: 'none' }} onClick={onPlay}>▶ Abspielen</button>}
+      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <button style={button()} onClick={() => onChange({ bpm: Math.max(40, data.bpm - 10) })} aria-label="langsamer">−</button>
+        <span style={{ minWidth: '88px', textAlign: 'center', fontWeight: 700 }}>♩ = {data.bpm}</span>
+        <button style={button()} onClick={() => onChange({ bpm: Math.min(180, data.bpm + 10) })} aria-label="schneller">+</button>
+      </span>
+      <button style={button(data.loop)} onClick={() => onChange({ loop: !data.loop })}>⟲ Wiederholen</button>
+      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }} title="Takte pro Zeile">
+        <button style={button()} disabled={perRowOf(data) <= 8} onClick={() => onChange({ perRow: Math.max(8, perRowOf(data) - 4) })} aria-label="weniger Takte pro Zeile">−</button>
+        <span style={{ textAlign: 'center', fontWeight: 700, whiteSpace: 'nowrap' }}>{perRowOf(data) / 4} Takte/Zeile</span>
+        <button style={button()} disabled={perRowOf(data) >= 32} onClick={() => onChange({ perRow: Math.min(32, perRowOf(data) + 4) })} aria-label="mehr Takte pro Zeile">+</button>
+      </span>
+      <button style={button()} onClick={() => resize(Math.min(64, data.beats + 4))}>+ Takt</button>
+      <button style={button()} disabled={data.beats <= 4} onClick={() => resize(Math.max(4, data.beats - 4))}>− Takt</button>
+      <button style={button()} onClick={() => { if (window.confirm('Alle Noten dieser Partitur löschen?')) onChange({ cells: [], lyrics: undefined }); }}>Leeren</button>
+      <select
+        value=""
+        onChange={(e) => {
+          const preset = SCORE_PRESETS.find((p) => p.id === e.target.value);
+          if (preset && window.confirm(`„${preset.name}“ laden? Die aktuellen Noten werden ersetzt.`)) onChange(preset.data());
+        }}
+        style={{ ...button(), fontWeight: 600 }}
+      >
+        <option value="" disabled>Lied laden …</option>
+        {SCORE_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+    </div>
+  );
+}

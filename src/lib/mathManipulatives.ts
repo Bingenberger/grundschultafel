@@ -3,12 +3,14 @@
 // restored on load. Interaction (flipping counters, sliding abacus beads, turning clock
 // hands) is handled in the Whiteboard via `handleMathTap` / `pickClockHand`.
 import * as fabric from 'fabric';
+import { BoomwhackerScore, createScore, playTubes, SCORE_PRESETS } from '@/lib/boomwhacker';
 
 export type MathKind =
   | 'counter' | 'field' | 'card'
   | 'dienes'
   | 'abacus' | 'clock'
-  | 'money';
+  | 'money'
+  | 'score';
 
 // Fabric 7 positions objects by their centre by default; this material is laid out by its
 // top-left corner, so every shape states its origin explicitly.
@@ -340,6 +342,7 @@ export function createMathItems(id: string): fabric.FabricObject[] {
     case 'clock': return [new LearningClock()];
     default:
       if (id.startsWith('money-')) return [money(id.slice(6))];
+      if (id.startsWith('score-')) return [createScore(id.slice(6))];
       return [];
   }
 }
@@ -353,6 +356,13 @@ export function handleMathTap(obj: fabric.FabricObject, scenePoint: fabric.Point
   }
   if (obj instanceof Abacus) {
     return obj.tap(toLocal(obj, scenePoint));
+  }
+  if (obj instanceof BoomwhackerScore) {
+    const hit = obj.hit(toLocal(obj, scenePoint));
+    if (!hit) return false;
+    if ('tube' in hit) { playTubes([hit.tube]); return false; } // label: just listen
+    if (obj.toggleCell(hit.cell[0], hit.cell[1])) playTubes([hit.cell[0]]);
+    return true;
   }
   return false;
 }
@@ -415,3 +425,25 @@ export function piecesOnField(f: fabric.FabricObject, all: fabric.FabricObject[]
 // Zehnerstangen can be turned by 90° with a button
 export const isRotatablePiece = (o: fabric.FabricObject) =>
   (o as any).mathKind === 'dienes' && ((o as any).mathData?.piece === 'ten' || Math.abs(o.width - o.height) > 50);
+
+// --- Bündeln / Entbündeln (Zehnersystem) -------------------------------------------------
+
+export type DienesPiece = 'one' | 'ten' | 'hundred';
+export const DIENES_UNIT = UNIT;
+
+export function dienesPiece(o: fabric.FabricObject): DienesPiece | null {
+  if ((o as any).mathKind !== 'dienes') return null;
+  const piece = (o as any).mathData?.piece;
+  if (piece === 'one' || piece === 'ten' || piece === 'hundred') return piece;
+  // pieces created before mathData existed: tell them apart by their size
+  const long = Math.max(o.width, o.height);
+  const short = Math.min(o.width, o.height);
+  return long < 2 * UNIT ? 'one' : short < 2 * UNIT ? 'ten' : 'hundred';
+}
+
+export function createDienes(piece: DienesPiece) {
+  return dienes(piece);
+}
+
+// Music menu (Werkzeugkoffer → Musik)
+export const MUSIC_MENU: MathMenuEntry[] = SCORE_PRESETS.map((p) => ({ id: `score-${p.id}`, label: p.name }));

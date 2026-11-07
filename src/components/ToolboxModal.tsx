@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
-import { Timer, Ruler, Shuffle, Users, Dices, Volume2, Calculator } from 'lucide-react';
-import { MATH_MENU } from '@/lib/mathManipulatives';
+import { Timer, Ruler, Shuffle, Users, Dices, Volume2, Calculator, Music } from 'lucide-react';
+import { MATH_MENU, MUSIC_MENU } from '@/lib/mathManipulatives';
 
 interface ToolboxModalProps {
   onClose: () => void;
@@ -15,7 +15,7 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
     setClassroomTool(tool);
     onClose();
   };
-  const [view, setView] = useState<'main' | 'timer' | 'math'>('main');
+  const [view, setView] = useState<'main' | 'timer' | 'math' | 'music'>('main');
   const triggerAddMath = useWhiteboardStore((state) => state.triggerAddMath);
 
   const addRuler = () => {
@@ -44,6 +44,7 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
             onClick={() => setView('timer')}
           />
           <MenuButton icon={<Calculator size={18} />} label="Mathe" onClick={() => setView('math')} />
+          <MenuButton icon={<Music size={18} />} label="Boomwhacker" onClick={() => setView('music')} />
           <MenuButton
             icon={<Ruler size={18} />}
             label="Lineal"
@@ -53,6 +54,14 @@ export default function ToolboxModal({ onClose }: ToolboxModalProps) {
           <MenuButton icon={<Users size={18} />} label="Gruppen" onClick={() => openTool('groups')} />
           <MenuButton icon={<Dices size={18} />} label="Würfel" onClick={() => openTool('dice')} />
           <MenuButton icon={<Volume2 size={18} />} label="Lautstärke" onClick={() => openTool('noise')} />
+        </div>
+      ) : view === 'music' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '240px' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 'bold', opacity: 0.7 }}>Boomwhacker-Partitur einfügen</div>
+          {MUSIC_MENU.map((item) => (
+            <TimerButton key={item.id} onClick={() => { triggerAddMath(item.id); onClose(); }} label={item.label} />
+          ))}
+          <TimerButton onClick={() => setView('main')} label="Zurück" subtle />
         </div>
       ) : view === 'math' ? (
         // Stays open so several pieces can be added in a row

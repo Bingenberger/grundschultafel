@@ -2,9 +2,10 @@
 
 import { useWhiteboardStore } from '@/store/useWhiteboardStore';
 import { useState, useEffect, useRef } from 'react';
-import { Save, FolderOpen, ChevronUp, ChevronDown, Plus, X, FilePlus, Pen, Trash2, LogOut, ShieldAlert, List } from 'lucide-react';
+import { Library, Save, FolderOpen, ChevronUp, ChevronDown, Plus, X, FilePlus, Pen, Trash2, LogOut, ShieldAlert, List } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { saveNotebook, saveBeforeLeaving, hasUnsavedChanges } from '@/lib/notebookSave';
+import TemplatesModal from './TemplatesModal';
 
 export default function Sidebar() {
   const { 
@@ -63,7 +64,8 @@ export default function Sidebar() {
     };
   }, []);
 
-  const [user, setUser] = useState<{username: string, role: string} | null>(null);
+  const [user, setUser] = useState<{id: string, username: string, role: string} | null>(null);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -294,6 +296,15 @@ export default function Sidebar() {
           title="Öffnen"
         >
           <FolderOpen size={20} />
+        </button>
+
+        {/* Shared templates of the school */}
+        <button
+          onClick={() => setIsTemplatesOpen(true)}
+          style={buttonStyle}
+          title="Vorlagen der Schule"
+        >
+          <Library size={20} />
         </button>
 
         <div style={{ height: '2px', width: '32px', backgroundColor: 'var(--border)', borderRadius: '2px' }} />
@@ -547,6 +558,8 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      {isTemplatesOpen && <TemplatesModal user={user} onClose={() => setIsTemplatesOpen(false)} />}
 
       {saveMessage && (
         <div
